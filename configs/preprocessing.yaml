@@ -1,0 +1,13 @@
+# HGD Preprocessing Pipeline Configuration
+# NOTE: These values are initialized from the baseline implementation (basefile.py)
+# as default reference parameters and may be configured/experimented with in future phases.
+
+sampling_rate: 250        # Target sampling rate in Hz (resampled from original 500 Hz)
+filter_low: 4.0           # Bandpass filter lower cutoff frequency in Hz
+filter_high: 38.0         # Bandpass filter upper cutoff frequency in Hz
+epoch_start: 0.5          # Motor Imagery (MI) epoch interval start relative to event (seconds)
+epoch_end: 3.5            # Motor Imagery (MI) epoch interval end relative to event (seconds)
+window_size: 250          # Sliding window duration in samples (1.0 second at 250 Hz)
+window_stride: 50         # Sliding window step size / stride in samples (0.2 seconds at 250 Hz)
+normalization: "zscore"   # Per-trial / per-window channel Z-score normalization
+eps: 1e-6                 # Epsilon value for Z-score standard deviation numerical stability

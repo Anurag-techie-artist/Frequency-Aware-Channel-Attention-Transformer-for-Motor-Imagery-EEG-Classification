@@ -84,6 +84,63 @@ outputs/
     └── validation_report.md               # Automated dataset integrity validation report
 ```
 
+## Preprocessing Pipeline
+
+The `datasets/` package provides a modular, extensible, and configurable data pipeline that extracts preprocessing logic from the baseline implementation while preserving 100% functional equivalence.
+
+### Architecture
+
+```
+datasets/
+├── loader.py                 # EDF file discovery, raw MNE loading, & event extraction
+├── preprocessing.py          # Resampling, FIR bandpass filtering, & Z-score normalization
+├── windowing.py              # Sliding window segmentation & trial index tracking
+├── pipeline.py               # EEGPreprocessingPipeline orchestrator class
+└── dataset.py                # PyTorch HGDDataset wrapper for DataLoader integration
+```
+
+### EEGPreprocessingPipeline
+
+The `EEGPreprocessingPipeline` encapsulates sequential processing stages:
+`load_raw` → `resample` → `filter` → `epoch` → `normalize` → `window`
+
+```python
+from datasets import EEGPreprocessingPipeline, HGDDataset
+
+# Process a single EDF recording file
+pipeline = EEGPreprocessingPipeline(config="configs/preprocessing.yaml")
+X_windows, y_windows, trial_ids = pipeline.process("hgd/train1/1.edf")
+
+# Wrap in PyTorch Dataset
+dataset = HGDDataset(file_paths="hgd/train1/1.edf", pipeline=pipeline)
+```
+
+### Configuration (`configs/preprocessing.yaml`)
+
+Initialized with baseline default reference parameters (configurable for future experiments):
+- `sampling_rate`: `250` Hz
+- `filter_low`: `4.0` Hz
+- `filter_high`: `38.0` Hz
+- `epoch_start`: `0.5` s
+- `epoch_end`: `3.5` s
+- `window_size`: `250` samples
+- `window_stride`: `50` samples
+- `normalization`: `"zscore"`
+
+### Testing & Equivalence Verification
+
+Run the test script to process a recording and save intermediate debug stage arrays (`raw.npy`, `filtered.npy`, `epochs.npy`, `windows.npy`, `labels.npy`) under `outputs/debug/`:
+
+```bash
+python scripts/test_pipeline.py
+```
+
+Run unit tests verifying 100% numerical match against baseline functions:
+
+```bash
+python -m unittest tests/test_pipeline_equivalence.py
+```
+
 ## Planned Roadmap
 
 1. **Phase 1: Baseline**
@@ -110,14 +167,20 @@ outputs/
 ## Quick Start
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+git clone <repo-url>
+cd <repo>
 
-# Run placeholder training entrypoint
-python train.py
+python -m venv .venv
 
-# Run placeholder evaluation entrypoint
-python test.py
+# Windows
+.venv\Scripts\activate
+
+# Linux/macOS
+source .venv/bin/activate
+
+python -m pip install -r requirements.txt
+
+python scripts/profile_dataset.py
 ```
 
 ## License
