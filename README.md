@@ -141,6 +141,54 @@ Run unit tests verifying 100% numerical match against baseline functions:
 python -m unittest tests/test_pipeline_equivalence.py
 ```
 
+## Frequency-Aware EEG Representation
+
+The `datasets/transforms/` package introduces modular signal transformations. The `FrequencyRepresentation` transform decomposes single-band EEG windows into multi-band spectral tensors using zero-phase FIR filtering (`mne.filter.filter_data`).
+
+### Scientific Rationale & Sub-Bands
+
+Motor Imagery (MI) tasks generate distinct oscillatory power variations across neurophysiological frequency bands:
+- **Theta ($\mathbf{4\text{--}8\text{ Hz}}$)**: Frontal midline synchronization during task initiation.
+- **Alpha ($\mathbf{8\text{--}13\text{ Hz}}$)**: Mu rhythm Event-Related Desynchronization (ERD) over sensorimotor cortex.
+- **Beta ($\mathbf{13\text{--}30\text{ Hz}}$)**: Sensorimotor rhythm desynchronization and post-movement rebound.
+- **Gamma ($\mathbf{30\text{--}38\text{ Hz}}$)**: High-frequency local motor network synchronization.
+
+### Tensor Shape Transformation
+
+```
+Single Window: (Channels, Samples)     ---> (Bands, Channels, Samples)
+               (133, 250)              ---> (4, 133, 250)
+
+Batch Windows: (N, Channels, Samples)  ---> (N, Bands, Channels, Samples)
+               (3520, 133, 250)        ---> (3520, 4, 133, 250)
+```
+
+### Configuration & Usage
+
+Enable multi-band frequency representation by passing `representation="frequency"` to the pipeline or dataset:
+
+```python
+from datasets import EEGPreprocessingPipeline, HGDDataset
+
+# Initialize pipeline
+pipeline = EEGPreprocessingPipeline(config="configs/preprocessing.yaml")
+
+# Extract 4D multi-band frequency tensor: (N_windows, Bands, Channels, Samples)
+X_freq, y_windows, trial_ids = pipeline.process("hgd/train1/1.edf", representation="frequency")
+
+# PyTorch Dataset integration
+dataset = HGDDataset("hgd/train1/1.edf", representation="frequency")
+sample_x, sample_y = dataset[0]  # sample_x shape: torch.Size([4, 133, 250])
+```
+
+### Testing & Verification
+
+Run the frequency representation unit test suite:
+
+```bash
+python -m unittest tests/test_frequency_representation.py
+```
+
 ## Planned Roadmap
 
 1. **Phase 1: Baseline**

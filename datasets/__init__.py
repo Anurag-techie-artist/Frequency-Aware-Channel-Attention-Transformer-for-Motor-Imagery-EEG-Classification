@@ -28,6 +28,12 @@ from datasets.pipeline import (
     PreprocessingConfig,
 )
 from datasets.dataset import HGDDataset
+from datasets.transforms import (
+    FrequencyBandConfig,
+    FrequencyRepresentationConfig,
+    FrequencyMetadata,
+    FrequencyRepresentation,
+)
 
 __all__ = [
     "locate_dataset",
@@ -48,4 +54,8 @@ __all__ = [
     "EEGPreprocessingPipeline",
     "PreprocessingConfig",
     "HGDDataset",
+    "FrequencyBandConfig",
+    "FrequencyRepresentationConfig",
+    "FrequencyMetadata",
+    "FrequencyRepresentation",
 ]

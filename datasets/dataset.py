@@ -2,7 +2,7 @@
 PyTorch HGDDataset Implementation.
 
 Provides HGDDataset wrapping windowed motor imagery EEG signals for PyTorch
-DataLoader integration.
+DataLoader integration. Supports both time-domain and frequency-aware multi-band representations.
 """
 
 import logging
@@ -30,6 +30,7 @@ class HGDDataset(Dataset):
         file_paths: Union[str, List[str]],
         pipeline: Optional[EEGPreprocessingPipeline] = None,
         config: Optional[Union[PreprocessingConfig, str, Dict[str, Any]]] = None,
+        representation: str = "time",
     ):
         """
         Initialize HGDDataset.
@@ -38,7 +39,13 @@ class HGDDataset(Dataset):
             file_paths: Path to a single EDF file or list of EDF file paths.
             pipeline: Pre-configured EEGPreprocessingPipeline instance (optional).
             config: Configuration for pipeline if pipeline is not provided (optional).
+            representation: "time" for (N, Channels, Samples) or "frequency" for (N, Bands, Channels, Samples).
         """
+        if representation not in ("time", "frequency"):
+            raise ValueError(f"Unknown representation mode '{representation}'. Supported modes: 'time', 'frequency'")
+
+        self.representation = representation
+
         if isinstance(file_paths, str):
             self.file_paths = [file_paths]
         else:
@@ -56,8 +63,8 @@ class HGDDataset(Dataset):
         total_trials = 0
 
         for f_path in self.file_paths:
-            logger.info(f"HGDDataset processing file: {f_path}")
-            X_win, y_win, t_ids = self.pipeline.process(f_path)
+            logger.info(f"HGDDataset processing file ({self.representation} representation): {f_path}")
+            X_win, y_win, t_ids = self.pipeline.process(f_path, representation=self.representation)
 
             all_windows.append(X_win)
             all_labels.append(y_win)
@@ -82,11 +89,14 @@ class HGDDataset(Dataset):
         self.trial_ids = torch.tensor(t_concat, dtype=torch.long)
 
         self.metadata: Dict[str, Any] = {
+            "representation": self.representation,
             "num_files": len(self.file_paths),
             "num_trials": total_trials,
             "num_windows": len(self.X),
-            "num_channels": self.X.shape[1] if self.X.ndim == 3 else 0,
-            "window_size": self.X.shape[2] if self.X.ndim == 3 else 0,
+            "tensor_shape": list(self.X.shape),
+            "num_channels": self.X.shape[-2] if self.X.ndim >= 3 else 0,
+            "window_size": self.X.shape[-1] if self.X.ndim >= 3 else 0,
+            "num_bands": self.X.shape[1] if self.X.ndim == 4 else 1,
         }
 
         logger.info(f"HGDDataset initialized with metadata: {self.metadata}")
@@ -103,6 +113,8 @@ class HGDDataset(Dataset):
             idx (int): Sample index.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor]: Sample tensor (shape: [n_channels, window_size]), label scalar.
+            Tuple[torch.Tensor, torch.Tensor]:
+                - Sample tensor (shape: [Channels, Samples] or [Bands, Channels, Samples])
+                - Label scalar
         """
         return self.X[idx], self.y[idx]

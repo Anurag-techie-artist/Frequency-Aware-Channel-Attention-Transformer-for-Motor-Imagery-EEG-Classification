@@ -11,3 +11,22 @@ window_size: 250          # Sliding window duration in samples (1.0 second at 25
 window_stride: 50         # Sliding window step size / stride in samples (0.2 seconds at 250 Hz)
 normalization: "zscore"   # Per-trial / per-window channel Z-score normalization
 eps: 1e-6                 # Epsilon value for Z-score standard deviation numerical stability
+
+# Frequency-Aware Representation Configuration
+frequency:
+  enabled: false          # Default false (use representation="time" for baseline compatibility)
+  fir_design: "firwin"     # FIR filter design method for mne.filter.filter_data
+  bands:
+    - name: theta
+      low: 4.0
+      high: 8.0
+    - name: alpha
+      low: 8.0
+      high: 13.0
+    - name: beta
+      low: 13.0
+      high: 30.0
+    - name: gamma
+      low: 30.0
+      high: 38.0
+

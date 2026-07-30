@@ -94,14 +94,14 @@ def generate_sliding_windows(
         trial = X[trial_idx].copy()
 
         if normalize:
-            mean = np.mean(trial, axis=1, keepdims=True)
-            std = np.std(trial, axis=1, keepdims=True)
+            mean = np.mean(trial, axis=-1, keepdims=True)
+            std = np.std(trial, axis=-1, keepdims=True)
             trial = (trial - mean) / (std + eps)
 
-        n_samples = trial.shape[1]
+        n_samples = trial.shape[-1]
         for ws in range(0, n_samples - window_size, stride):
             we = ws + window_size
-            window = trial[:, ws:we]
+            window = trial[..., ws:we]
 
             X_out.append(window)
             y_out.append(y[trial_idx])

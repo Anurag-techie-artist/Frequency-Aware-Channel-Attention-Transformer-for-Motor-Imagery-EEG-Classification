@@ -3,10 +3,7 @@ EEG Preprocessing Pipeline Orchestrator Class.
 
 Provides the extensible EEGPreprocessingPipeline base class that encapsulates
 the full end-to-end data pipeline:
-    load -> resample -> filter -> epoch -> normalize -> window
-
-Designed to be easily subclassed in future phases (e.g. FrequencyAwarePipeline,
-FACATPipeline) without modifying core data processing logic.
+    load -> resample -> filter -> epoch -> normalize -> window -> representation
 """
 
 import os
@@ -21,6 +18,7 @@ import mne
 from datasets.loader import load_raw_edf, extract_events
 from datasets.preprocessing import resample_signal, bandpass_filter, extract_epochs
 from datasets.windowing import generate_sliding_windows
+from datasets.transforms.frequency import FrequencyRepresentation, FrequencyRepresentationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +35,7 @@ class PreprocessingConfig:
     window_stride: int = 50
     normalization: str = "zscore"
     eps: float = 1e-6
+    raw_dict: Optional[Dict[str, Any]] = None
 
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "PreprocessingConfig":
@@ -46,7 +45,7 @@ class PreprocessingConfig:
             return cls()
 
         with open(yaml_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
+            data = yaml.safe_load(f) or {}
 
         return cls(
             sampling_rate=float(data.get("sampling_rate", 250.0)),
@@ -58,6 +57,7 @@ class PreprocessingConfig:
             window_stride=int(data.get("window_stride", 50)),
             normalization=str(data.get("normalization", "zscore")),
             eps=float(data.get("eps", 1e-6)),
+            raw_dict=data,
         )
 
 
@@ -70,7 +70,8 @@ class EEGPreprocessingPipeline:
     2. resample
     3. filter
     4. epoch
-    5. window
+    5. frequency representation (optional)
+    6. window
     """
 
     def __init__(self, config: Optional[Union[PreprocessingConfig, str, Dict[str, Any]]] = None):
@@ -93,6 +94,17 @@ class EEGPreprocessingPipeline:
             self.config = config
         else:
             raise TypeError(f"Invalid config type: {type(config)}")
+
+        # Initialize FrequencyRepresentation module
+        freq_raw_dict = {}
+        if self.config.raw_dict and "frequency" in self.config.raw_dict:
+            freq_raw_dict = self.config.raw_dict["frequency"]
+
+        freq_config = FrequencyRepresentationConfig.from_dict(
+            freq_raw_dict,
+            sampling_rate=self.config.sampling_rate
+        )
+        self.frequency_representation = FrequencyRepresentation(config=freq_config)
 
         logger.info(f"Initialized EEGPreprocessingPipeline with config: {self.config}")
 
@@ -136,40 +148,51 @@ class EEGPreprocessingPipeline:
             eps=self.config.eps
         )
 
-    def process(self, filepath: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def process(self, filepath: str, representation: str = "time") -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Run end-to-end pipeline on an EDF file.
 
         Args:
             filepath (str): Path to EDF recording file.
+            representation (str): "time" for (N, Channels, Samples) or "frequency" for (N, Bands, Channels, Samples).
 
         Returns:
             Tuple[np.ndarray, np.ndarray, np.ndarray]:
-                - X_windows: (N_windows, n_channels, window_size)
+                - X_out: Windowed representation array
                 - y_windows: (N_windows,)
                 - trial_ids: (N_windows,)
         """
+        if representation not in ("time", "frequency"):
+            raise ValueError(f"Unknown representation mode '{representation}'. Supported modes: 'time', 'frequency'")
+
         raw = self.load_raw(filepath)
         raw = self.resample(raw)
         raw = self.filter(raw)
         X_epochs, y_epochs = self.epoch(raw)
-        X_windows, y_windows, trial_ids = self.window(X_epochs, y_epochs)
+
+        if representation == "frequency":
+            logger.info("Applying FrequencyRepresentation transformation to epochs...")
+            X_epochs_freq, _ = self.frequency_representation.extract(X_epochs)
+            X_windows, y_windows, trial_ids = self.window(X_epochs_freq, y_epochs)
+        else:
+            X_windows, y_windows, trial_ids = self.window(X_epochs, y_epochs)
 
         return X_windows, y_windows, trial_ids
 
-    def process_debug(self, filepath: str) -> Dict[str, Any]:
+    def process_debug(self, filepath: str, representation: str = "time") -> Dict[str, Any]:
         """
         Run pipeline and return all intermediate stage outputs for inspection/debugging.
 
+        Args:
+            filepath (str): Path to EDF recording file.
+            representation (str): "time" or "frequency".
+
         Returns:
-            Dict[str, Any] containing:
-                - 'raw': Raw MNE signal array
-                - 'filtered': Filtered signal array
-                - 'epochs': Epochs data array
-                - 'windows': Windowed samples array
-                - 'labels': Window labels array
-                - 'trial_ids': Trial IDs array
+            Dict[str, Any] containing stage outputs.
         """
+        if representation not in ("time", "frequency"):
+            raise ValueError(f"Unknown representation mode '{representation}'. Supported modes: 'time', 'frequency'")
+
         raw_obj = self.load_raw(filepath)
         raw_signal = raw_obj.get_data().copy()
 
@@ -178,13 +201,37 @@ class EEGPreprocessingPipeline:
         filtered_signal = filtered_obj.get_data().copy()
 
         X_epochs, y_epochs = self.epoch(filtered_obj)
-        X_windows, y_windows, trial_ids = self.window(X_epochs, y_epochs)
 
-        return {
-            "raw": raw_signal,
-            "filtered": filtered_signal,
-            "epochs": X_epochs,
-            "windows": X_windows,
-            "labels": y_windows,
-            "trial_ids": trial_ids,
-        }
+        if representation == "frequency":
+            logger.info("Extracting frequency representation for debug export...")
+            X_epochs_freq, freq_meta = self.frequency_representation.extract(X_epochs)
+            X_windows, y_windows, trial_ids = self.window(X_epochs_freq, y_epochs)
+
+            debug_res = {
+                "raw": raw_signal,
+                "filtered": filtered_signal,
+                "epochs": X_epochs,
+                "epochs_frequency": X_epochs_freq,
+                "windows": X_windows,
+                "labels": y_windows,
+                "trial_ids": trial_ids,
+                "frequency_tensor": X_windows,
+                "frequency_metadata": freq_meta,
+            }
+
+            debug_dir = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), "..", "outputs", "debug")
+            )
+            self.frequency_representation.export_debug(X_windows, freq_meta, debug_dir)
+        else:
+            X_windows, y_windows, trial_ids = self.window(X_epochs, y_epochs)
+            debug_res = {
+                "raw": raw_signal,
+                "filtered": filtered_signal,
+                "epochs": X_epochs,
+                "windows": X_windows,
+                "labels": y_windows,
+                "trial_ids": trial_ids,
+            }
+
+        return debug_res
