@@ -39,6 +39,51 @@ Deep Learning-based Motor Imagery EEG Classification/
 └── test.py                  # Evaluation entry point script
 ```
 
+## Dataset Profiling
+
+The repository includes an automated, non-destructive dataset profiler pipeline to inspect, validate, and extract statistics from High Gamma Dataset (HGD) EDF files (`hgd/train1/` and `hgd/test1/`).
+
+### Purpose of Dataset Profiling
+
+Dataset profiling establishes a rigorous data foundation prior to preprocessing and model development. It automatically:
+- Validates EDF file readability, channel counts, and sampling rate consistency.
+- Computes channel-level signal statistics (min, max, mean, standard deviation, RMS) to detect noisy/dead electrodes or scaling anomalies.
+- Generates reproducible dataset fingerprints and event dictionaries used by future pipeline phases.
+- Produces publication-quality visualizations for dataset documentation and exploratory data analysis (EDA).
+
+### Running the Profiler
+
+```bash
+python scripts/profile_dataset.py
+```
+
+### Generated Reports & Visualizations
+
+Running the profiler automatically creates structured outputs under `outputs/`:
+
+```
+outputs/
+├── logs/
+│   └── profiling.log                      # Complete execution logs
+├── plots/
+│   ├── annotation_distribution.png        # Annotation label frequency breakdown
+│   ├── class_distribution.png             # Extracted event/class distribution
+│   ├── recording_duration_distribution.png # Duration (seconds) per EDF recording
+│   ├── channel_count_distribution.png     # EEG channel count per file
+│   ├── channel_presence_heatmap.png       # Electrode presence matrix (Files x Channels)
+│   ├── sample_signal_train.png            # Continuous EEG signal trace (train split)
+│   └── sample_signal_test.png             # Continuous EEG signal trace (test split)
+└── reports/
+    ├── dataset_summary.json               # Aggregated JSON dataset summary
+    ├── dataset_summary.md                 # Formatted Markdown report & file table
+    ├── dataset_fingerprint.json           # Reproducible dataset version fingerprint
+    ├── event_dictionary.json              # Discovered annotation-to-event mappings
+    ├── file_metadata.csv                  # File-wise metadata table
+    ├── signal_statistics.csv              # Per-channel signal statistics (min, max, mean, std, RMS)
+    ├── raw_metadata.json                  # Complete unaggregated metadata dump
+    └── validation_report.md               # Automated dataset integrity validation report
+```
+
 ## Planned Roadmap
 
 1. **Phase 1: Baseline**
