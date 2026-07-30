@@ -1,0 +1,12 @@
+torch
+torchvision
+torchaudio
+numpy
+scipy
+scikit-learn
+mne
+matplotlib
+pandas
+tqdm
+tensorboard
+einops

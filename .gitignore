@@ -1,0 +1,72 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# =========================
+# Build / Packaging
+# =========================
+.Python
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# =========================
+# Virtual Environments
+# =========================
+.venv/
+venv/
+env/
+ENV/
+
+# =========================
+# IDE / Editor
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Machine Learning Artifacts
+# =========================
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# =========================
+# Dataset
+# =========================
+hgd/
+
+# =========================
+# Outputs
+# Keep folder structure but ignore generated files
+# =========================
+outputs/*
+!outputs/**/
+!outputs/**/.gitkeep
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
