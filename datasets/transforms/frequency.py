@@ -51,18 +51,22 @@ class FrequencyRepresentationConfig:
         if not data:
             return cls(sampling_rate=sampling_rate)
 
-        band_objs = []
-        raw_bands = data.get("bands", [])
-        for b in raw_bands:
-            band_objs.append(FrequencyBandConfig(
-                name=str(b.get("name", "")),
-                low=float(b.get("low", 0.0)),
-                high=float(b.get("high", 0.0)),
-            ))
+        if "bands" in data:
+            raw_bands = data.get("bands") or []
+            band_objs = []
+            for b in raw_bands:
+                band_objs.append(FrequencyBandConfig(
+                    name=str(b.get("name", "")),
+                    low=float(b.get("low", 0.0)),
+                    high=float(b.get("high", 0.0)),
+                ))
+            bands = band_objs
+        else:
+            bands = cls().bands
 
         return cls(
             sampling_rate=sampling_rate,
-            bands=band_objs if band_objs else cls().bands,
+            bands=bands,
             fir_design=str(data.get("fir_design", "firwin")),
             debug=bool(data.get("debug", False)),
         )
@@ -115,21 +119,31 @@ class FrequencyRepresentation:
         """
         nyquist = self.config.sampling_rate / 2.0
         if not self.config.bands:
-            raise ValueError("Frequency representation configuration contains 0 frequency bands.")
+            err_msg = "Frequency representation configuration contains 0 frequency bands."
+            logger.error(f"Configuration validation failed: {err_msg}")
+            raise ValueError(err_msg)
 
         for b in self.config.bands:
             if b.low <= 0:
-                raise ValueError(f"Invalid low frequency for band '{b.name}': {b.low} Hz must be > 0.")
+                err_msg = f"Invalid low frequency for band '{b.name}': {b.low} Hz must be > 0."
+                logger.error(f"Configuration validation failed: {err_msg}")
+                raise ValueError(err_msg)
             if b.low >= b.high:
-                raise ValueError(
+                err_msg = (
                     f"Invalid band bounds for '{b.name}': low cutoff ({b.low} Hz) "
                     f"must be strictly less than high cutoff ({b.high} Hz)."
                 )
+                logger.error(f"Configuration validation failed: {err_msg}")
+                raise ValueError(err_msg)
             if b.high >= nyquist:
-                raise ValueError(
+                err_msg = (
                     f"Invalid high cutoff for band '{b.name}': {b.high} Hz exceeds or equals "
                     f"Nyquist frequency ({nyquist} Hz) for sampling rate {self.config.sampling_rate} Hz."
                 )
+                logger.error(f"Configuration validation failed: {err_msg}")
+                raise ValueError(err_msg)
+
+        logger.info("Frequency representation configuration validation succeeded.")
 
     def filter_band(self, signal: np.ndarray, band: FrequencyBandConfig) -> np.ndarray:
         """

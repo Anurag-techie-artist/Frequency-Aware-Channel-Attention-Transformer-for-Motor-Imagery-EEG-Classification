@@ -47,18 +47,17 @@ def main():
     # 1. Initialize EEGPreprocessingPipeline
     pipeline = EEGPreprocessingPipeline()
 
-    # 2. Process file with debug stage outputs
-    logger.info(f"Running pipeline debug process on: {sample_edf}")
-    debug_outputs = pipeline.process_debug(sample_edf)
+    # 2. Process file with debug stage outputs (time domain mode)
+    logger.info(f"Running pipeline debug process (time representation) on: {sample_edf}")
+    debug_outputs_time = pipeline.process_debug(sample_edf, representation="time")
 
-    raw_signal = debug_outputs["raw"]
-    filtered_signal = debug_outputs["filtered"]
-    epochs_data = debug_outputs["epochs"]
-    windows_data = debug_outputs["windows"]
-    labels_data = debug_outputs["labels"]
-    trial_ids = debug_outputs["trial_ids"]
+    raw_signal = debug_outputs_time["raw"]
+    filtered_signal = debug_outputs_time["filtered"]
+    epochs_data = debug_outputs_time["epochs"]
+    windows_data = debug_outputs_time["windows"]
+    labels_data = debug_outputs_time["labels"]
 
-    # 3. Save intermediate debug stage arrays to outputs/debug/
+    # Save time domain intermediate debug stage arrays to outputs/debug/
     debug_dir = os.path.join(PROJECT_ROOT, "outputs", "debug")
     os.makedirs(debug_dir, exist_ok=True)
 
@@ -68,13 +67,18 @@ def main():
     np.save(os.path.join(debug_dir, "windows.npy"), windows_data)
     np.save(os.path.join(debug_dir, "labels.npy"), labels_data)
 
-    logger.info(f"Saved intermediate debug arrays to: {debug_dir}")
+    # 3. Process file with debug stage outputs (frequency domain mode)
+    logger.info(f"Running pipeline debug process (frequency representation) on: {sample_edf}")
+    debug_outputs_freq = pipeline.process_debug(sample_edf, representation="frequency")
+    windows_freq_data = debug_outputs_freq["windows"]
 
-    # 4. Demonstrate PyTorch HGDDataset integration
-    logger.info("Instantiating PyTorch HGDDataset wrapper...")
-    dataset = HGDDataset(file_paths=sample_edf, pipeline=pipeline)
+    # 4. Demonstrate PyTorch HGDDataset integration for both modes
+    logger.info("Instantiating PyTorch HGDDataset wrappers...")
+    dataset_time = HGDDataset(file_paths=sample_edf, pipeline=pipeline, representation="time")
+    dataset_freq = HGDDataset(file_paths=sample_edf, pipeline=pipeline, representation="frequency")
 
-    sample_x, sample_y = dataset[0]
+    sample_x_time, sample_y_time = dataset_time[0]
+    sample_x_freq, sample_y_freq = dataset_freq[0]
 
     # 5. Log & Print Pipeline Statistics
     label_counts = dict(Counter(labels_data.tolist()))
@@ -82,20 +86,25 @@ def main():
     print("\n" + "=" * 60)
     print("EEG PREPROCESSING PIPELINE TEST STATISTICS")
     print("=" * 60)
-    print(f"Sample EDF Path      : {sample_edf}")
-    print(f"Raw Signal Shape     : {raw_signal.shape} (Channels x Time)")
-    print(f"Filtered Signal Shape: {filtered_signal.shape} (Channels x Time)")
-    print(f"Extracted Epochs     : {epochs_data.shape} (Trials x Channels x Time)")
-    print(f"Generated Windows    : {windows_data.shape} (Windows x Channels x Time)")
-    print(f"Window Labels Count  : {len(labels_data)} {label_counts}")
-    print(f"PyTorch Sample Tensor: {sample_x.shape}, Label: {sample_y.item()}")
+    print(f"Sample EDF Path            : {sample_edf}")
+    print(f"Raw Signal Shape           : {raw_signal.shape} (Channels x Time)")
+    print(f"Filtered Signal Shape      : {filtered_signal.shape} (Channels x Time)")
+    print(f"Extracted Epochs           : {epochs_data.shape} (Trials x Channels x Time)")
+    print(f"Time Windows Shape         : {windows_data.shape} (Windows x Channels x Time)")
+    print(f"Frequency Windows Shape    : {windows_freq_data.shape} (Windows x Bands x Channels x Time)")
+    print(f"Window Labels Count        : {len(labels_data)} {label_counts}")
+    print(f"PyTorch Time Sample        : {sample_x_time.shape}, Label: {sample_y_time.item()}")
+    print(f"PyTorch Frequency Sample   : {sample_x_freq.shape}, Label: {sample_y_freq.item()}")
     print("=" * 60)
-    print("Debug Outputs Saved  :")
+    print("Debug Outputs Saved to outputs/debug/ :")
     print(f"  - {os.path.join(debug_dir, 'raw.npy')}")
     print(f"  - {os.path.join(debug_dir, 'filtered.npy')}")
     print(f"  - {os.path.join(debug_dir, 'epochs.npy')}")
     print(f"  - {os.path.join(debug_dir, 'windows.npy')}")
     print(f"  - {os.path.join(debug_dir, 'labels.npy')}")
+    print(f"  - {os.path.join(debug_dir, 'frequency_tensor.npy')}")
+    print(f"  - {os.path.join(debug_dir, 'frequency_metadata.json')}")
+    print(f"  - {os.path.join(debug_dir, 'frequency_summary.json')}")
     print("=" * 60)
     print("EEG Preprocessing Pipeline Test Completed Successfully!\n")
 

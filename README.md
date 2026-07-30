@@ -141,52 +141,107 @@ Run unit tests verifying 100% numerical match against baseline functions:
 python -m unittest tests/test_pipeline_equivalence.py
 ```
 
-## Frequency-Aware EEG Representation
+## Frequency-Aware EEG Representation (Phase 3)
 
-The `datasets/transforms/` package introduces modular signal transformations. The `FrequencyRepresentation` transform decomposes single-band EEG windows into multi-band spectral tensors using zero-phase FIR filtering (`mne.filter.filter_data`).
+The `datasets/transforms/` package introduces modular signal transformations. The `FrequencyRepresentation` class decomposes EEG signals into multi-band spectral representations using zero-phase FIR filtering via MNE (`mne.filter.filter_data`).
 
-### Scientific Rationale & Sub-Bands
+### Motivation & Neurophysiological Rationale
 
-Motor Imagery (MI) tasks generate distinct oscillatory power variations across neurophysiological frequency bands:
-- **Theta ($\mathbf{4\text{--}8\text{ Hz}}$)**: Frontal midline synchronization during task initiation.
-- **Alpha ($\mathbf{8\text{--}13\text{ Hz}}$)**: Mu rhythm Event-Related Desynchronization (ERD) over sensorimotor cortex.
-- **Beta ($\mathbf{13\text{--}30\text{ Hz}}$)**: Sensorimotor rhythm desynchronization and post-movement rebound.
-- **Gamma ($\mathbf{30\text{--}38\text{ Hz}}$)**: High-frequency local motor network synchronization.
+Motor Imagery (MI) tasks induce neurophysiological phenomena known as Event-Related Desynchronization (ERD) and Event-Related Synchronization (ERS). These phenomena manifest in distinct frequency bands across the sensorimotor cortex:
+- **Theta ($\mathbf{4\text{--}8\text{ Hz}}$)**: Frontal midline synchronization during task initiation and cognitive processing.
+- **Alpha ($\mathbf{8\text{--}13\text{ Hz}}$)**: Mu rhythm ERD over sensorimotor cortex during imagery execution.
+- **Beta ($\mathbf{13\text{--}30\text{ Hz}}$)**: ERD during motor execution/imagery and post-imagery ERS (beta rebound).
+- **Gamma ($\mathbf{30\text{--}38\text{ Hz}}$)**: High-frequency local network synchronization and fine motor control representation.
 
-### Tensor Shape Transformation
+By decomposing standard time-domain signals into multi-band spectral tensors, downstream attention and transformer architectures can dynamically weight both spatial electrode contributions and frequency band relevance.
+
+### FIR Zero-Phase Filtering
+
+To eliminate phase distortion and preserve temporal alignment across frequency bands:
+- **Filter Method**: Finite Impulse Response (FIR) filter design using `firwin`.
+- **Phase Alignment**: Forward-backward zero-phase filtering (`phase="zero"`), ensuring zero phase shift across all channels and sub-bands.
+- **Transition Bandwidth**: Automatically adjusted based on sampling rate ($250\text{ Hz}$) and window duration to prevent ringing artifacts.
+
+### Tensor Shape Transformations
+
+The transform handles both single time-domain windows and batches of trials/windows seamlessly:
 
 ```
-Single Window: (Channels, Samples)     ---> (Bands, Channels, Samples)
-               (133, 250)              ---> (4, 133, 250)
+Single Window Input : (Channels, Samples)         ---> (Bands, Channels, Samples)
+                      (133, 250)                  ---> (4, 133, 250)
 
-Batch Windows: (N, Channels, Samples)  ---> (N, Bands, Channels, Samples)
-               (3520, 133, 250)        ---> (3520, 4, 133, 250)
+Batch Input         : (N, Channels, Samples)      ---> (N, Bands, Channels, Samples)
+                      (3520, 133, 250)            ---> (3520, 4, 133, 250)
 ```
 
-### Configuration & Usage
+### Representation Modes
 
-Enable multi-band frequency representation by passing `representation="frequency"` to the pipeline or dataset:
+The pipeline and PyTorch dataset support two primary representation modes:
+
+1. **Time Domain Mode (`representation="time"`)**:
+   - Returns standard 3D window tensors `(N_windows, Channels, Samples)`.
+   - Preserves 100% numerical and functional equivalence with the baseline pipeline (`basefile.py`).
+
+2. **Frequency Domain Mode (`representation="frequency"`)**:
+   - Returns 4D multi-band tensors `(N_windows, Bands, Channels, Samples)`.
+   - Each sample in PyTorch `HGDDataset` yields a tensor of shape `[Bands, Channels, Samples]`.
+
+### YAML Configuration (`configs/preprocessing.yaml`)
+
+Configuration is fully declarative and parsed into `FrequencyRepresentationConfig` and `FrequencyBandConfig`:
+
+```yaml
+frequency:
+  enabled: false          # Set representation="frequency" to enable
+  fir_design: "firwin"     # Design method for mne.filter.filter_data
+  bands:
+    - name: theta
+      low: 4.0
+      high: 8.0
+    - name: alpha
+      low: 8.0
+      high: 13.0
+    - name: beta
+      low: 13.0
+      high: 30.0
+    - name: gamma
+      low: 30.0
+      high: 38.0
+```
+
+### Code Usage Example
 
 ```python
 from datasets import EEGPreprocessingPipeline, HGDDataset
 
-# Initialize pipeline
+# 1. Initialize Pipeline with configuration
 pipeline = EEGPreprocessingPipeline(config="configs/preprocessing.yaml")
 
-# Extract 4D multi-band frequency tensor: (N_windows, Bands, Channels, Samples)
+# 2. Extract multi-band frequency tensor: (N_windows, 4, 133, 250)
 X_freq, y_windows, trial_ids = pipeline.process("hgd/train1/1.edf", representation="frequency")
 
-# PyTorch Dataset integration
-dataset = HGDDataset("hgd/train1/1.edf", representation="frequency")
-sample_x, sample_y = dataset[0]  # sample_x shape: torch.Size([4, 133, 250])
+# 3. Instantiate PyTorch Dataset wrapper
+dataset = HGDDataset(
+    file_paths="hgd/train1/1.edf",
+    pipeline=pipeline,
+    representation="frequency"
+)
+
+sample_tensor, label = dataset[0]
+print("PyTorch sample tensor shape:", sample_tensor.shape)  # torch.Size([4, 133, 250])
+
+# 4. Debug export mode (saves frequency_tensor.npy, frequency_metadata.json, frequency_summary.json)
+debug_dict = pipeline.process_debug("hgd/train1/1.edf", representation="frequency")
 ```
 
-### Testing & Verification
+### Verification & Testing
 
-Run the frequency representation unit test suite:
+Run unit tests verifying configuration validation, tensor transformations, band ordering, absence of NaN/Inf values, and debug artifact export:
 
 ```bash
 python -m unittest tests/test_frequency_representation.py
+python -m unittest tests/test_pipeline_equivalence.py
+python scripts/test_pipeline.py
 ```
 
 ## Planned Roadmap
