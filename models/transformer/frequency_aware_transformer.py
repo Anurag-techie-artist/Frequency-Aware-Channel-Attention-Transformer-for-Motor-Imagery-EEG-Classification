@@ -1,11 +1,11 @@
 """
 Frequency-Aware Transformer Encoder (FATE) for Motor Imagery EEG Classification.
 
-Combines BandChannelTokenizer, BandChannelEmbedding, and PyTorch TransformerEncoder
-stack to process multi-band EEG token sequences.
+Combines BandChannelTokenizer, BandChannelEmbedding, CLSToken, and PyTorch
+TransformerEncoder stack to process multi-band EEG token sequences.
 
 Input Shape:  (Batch, Bands, Channels, Samples) -> (B, F, C, S)
-Output Shape: Contextual Embeddings (Batch, Tokens, d_model) where Tokens = F * C.
+Output Shape: Contextual Embeddings (Batch, Tokens, d_model) & CLS Embedding (Batch, d_model).
 """
 
 import os
@@ -17,6 +17,7 @@ from typing import Dict, Any, Tuple, Optional, Union, List
 import torch
 import torch.nn as nn
 
+from models.common.cls_token import CLSToken
 from models.transformer.tokenizer import (
     BandChannelTokenizer,
     TokenizerConfig,
@@ -29,9 +30,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class FATEOutput:
-    """Immutable container holding contextual token embeddings and tokenization metadata."""
+    """Immutable container holding contextual token embeddings, CLS embedding, and tokenization metadata."""
 
     contextual_embeddings: torch.Tensor
+    cls_embedding: torch.Tensor
     token_metadata: TokenizationMetadata
 
 
@@ -109,7 +111,7 @@ class FrequencyAwareTransformer(nn.Module):
     Frequency-Aware Transformer Encoder (FATE).
 
     Processes ACA output tensors (B, F, C, S) into contextualized token sequence
-    embeddings (B, F*C, d_model) via multi-head self-attention.
+    embeddings (B, F*C, d_model) and global CLS embedding (B, d_model) via multi-head self-attention.
     """
 
     def __init__(
@@ -155,6 +157,7 @@ class FrequencyAwareTransformer(nn.Module):
 
         self.tokenizer = BandChannelTokenizer(config=self.config.tokenizer)
         self.embedding = BandChannelEmbedding(config=self.config.embedding)
+        self.cls_token_layer = CLSToken(d_model=d_model)
 
         # PyTorch Standard TransformerEncoder Stack
         encoder_layer = nn.TransformerEncoderLayer(
@@ -203,17 +206,25 @@ class FrequencyAwareTransformer(nn.Module):
         # 1. Tokenize (B, F, C, S) -> (B, F*C, S)
         tokens = self.tokenizer(x)
 
-        # 2. Embed tokens with Linear Projection + 2D Positional Embeddings
+        # 2. Embed tokens with Linear Projection + 2D Positional Embeddings -> (B, N, d_model)
         embedded = self.embedding(
             tokens, num_bands=num_bands, num_channels=num_channels
         )
 
-        # 3. Process sequence tokens through TransformerEncoder
-        contextual_embeddings = self.transformer_encoder(embedded)
+        # 3. Prepend CLS token -> (B, N+1, d_model)
+        embedded_with_cls = self.cls_token_layer(embedded)
+
+        # 4. Process sequence tokens through TransformerEncoder -> (B, N+1, d_model)
+        transformer_out = self.transformer_encoder(embedded_with_cls)
+
+        # 5. Extract CLS embedding (index 0) and contextual token embeddings (indices 1..N)
+        cls_embedding = transformer_out[:, 0, :]  # (B, d_model)
+        contextual_embeddings = transformer_out[:, 1:, :]  # (B, N, d_model)
 
         out_features = (
             contextual_embeddings.squeeze(0) if unbatched else contextual_embeddings
         )
+        out_cls = cls_embedding.squeeze(0) if unbatched else cls_embedding
 
         if not return_metadata:
             return out_features
@@ -228,6 +239,7 @@ class FrequencyAwareTransformer(nn.Module):
         )
         fate_output = FATEOutput(
             contextual_embeddings=out_features,
+            cls_embedding=out_cls,
             token_metadata=metadata,
         )
         return out_features, fate_output
