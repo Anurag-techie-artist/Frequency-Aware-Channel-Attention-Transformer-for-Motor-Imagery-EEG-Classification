@@ -1,0 +1,10 @@
+# Model Architecture Configuration
+# Phase 4: Adaptive Channel Attention (ACA) & Future Modules
+
+model:
+  attention:
+    enabled: true
+    hidden_ratio: 4
+    dropout: 0.1
+    activation: "gelu"
+    residual: true
