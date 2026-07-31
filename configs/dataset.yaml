@@ -6,3 +6,8 @@ dataset:
   train_directory: "train1"
   test_directory: "test1"
   description: "High-Gamma Dataset"
+  representation: "frequency"
+  cache:
+    enabled: false
+    directory: "outputs/cache"
+

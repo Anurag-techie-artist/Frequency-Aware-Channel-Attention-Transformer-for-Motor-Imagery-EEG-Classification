@@ -5,6 +5,7 @@ Provides HGDDataset wrapping windowed motor imagery EEG signals for PyTorch
 DataLoader integration. Supports both time-domain and frequency-aware multi-band representations.
 """
 
+import os
 import logging
 from typing import List, Union, Optional, Tuple, Dict, Any
 
@@ -31,6 +32,7 @@ class HGDDataset(Dataset):
         pipeline: Optional[EEGPreprocessingPipeline] = None,
         config: Optional[Union[PreprocessingConfig, str, Dict[str, Any]]] = None,
         representation: str = "time",
+        cache_config: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize HGDDataset.
@@ -40,16 +42,37 @@ class HGDDataset(Dataset):
             pipeline: Pre-configured EEGPreprocessingPipeline instance (optional).
             config: Configuration for pipeline if pipeline is not provided (optional).
             representation: "time" for (N, Channels, Samples) or "frequency" for (N, Bands, Channels, Samples).
+            cache_config: Optional dictionary with 'enabled' (bool) and 'directory' (str).
         """
         if representation not in ("time", "frequency"):
             raise ValueError(f"Unknown representation mode '{representation}'. Supported modes: 'time', 'frequency'")
 
         self.representation = representation
+        self.cache_config = cache_config or {}
 
         if isinstance(file_paths, str):
             self.file_paths = [file_paths]
         else:
             self.file_paths = list(file_paths)
+
+        # Check cache if enabled
+        cache_enabled = self.cache_config.get("enabled", False)
+        cache_dir = self.cache_config.get("directory", "outputs/cache")
+
+        if cache_enabled and os.path.exists(cache_dir):
+            import hashlib
+            paths_key = "_".join(sorted(self.file_paths))
+            hash_str = hashlib.md5(f"{paths_key}_{representation}".encode("utf-8")).hexdigest()
+            cache_path = os.path.join(cache_dir, f"hgd_cache_{hash_str}.pt")
+
+            if os.path.exists(cache_path):
+                logger.info(f"Loading HGDDataset cached tensors from: {cache_path}")
+                cached_data = torch.load(cache_path)
+                self.X = cached_data["X"]
+                self.y = cached_data["y"]
+                self.trial_ids = cached_data["trial_ids"]
+                self.metadata = cached_data["metadata"]
+                return
 
         if pipeline is not None:
             self.pipeline = pipeline
@@ -98,6 +121,24 @@ class HGDDataset(Dataset):
             "window_size": self.X.shape[-1] if self.X.ndim >= 3 else 0,
             "num_bands": self.X.shape[1] if self.X.ndim == 4 else 1,
         }
+
+        # Save to cache if enabled
+        if cache_enabled:
+            import hashlib
+            os.makedirs(cache_dir, exist_ok=True)
+            paths_key = "_".join(sorted(self.file_paths))
+            hash_str = hashlib.md5(f"{paths_key}_{representation}".encode("utf-8")).hexdigest()
+            cache_path = os.path.join(cache_dir, f"hgd_cache_{hash_str}.pt")
+            logger.info(f"Saving HGDDataset processed tensors to cache: {cache_path}")
+            torch.save(
+                {
+                    "X": self.X,
+                    "y": self.y,
+                    "trial_ids": self.trial_ids,
+                    "metadata": self.metadata,
+                },
+                cache_path,
+            )
 
         logger.info(f"HGDDataset initialized with metadata: {self.metadata}")
 

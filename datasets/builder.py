@@ -1,9 +1,9 @@
 """
 Dataset & DataLoader Factory for EEGMotorImageryModel Training.
 
-Constructs PyTorch DataLoaders for training, validation, and test sets.
-Supports synthetic dataset fallbacks for standalone framework verification.
-Phase 10 Patch v0.10.1: Integrates centralized dataset path resolution.
+Constructs PyTorch DataLoaders for training, validation, and test sets using real
+High-Gamma Dataset (HGD) preprocessing pipeline or synthetic fallback.
+Phase 10 Patch v0.10.2: Real HGD DataLoader Integration & Pluggable Split Strategy.
 """
 
 import os
@@ -11,8 +11,17 @@ import logging
 from typing import Dict, Any, Tuple, Optional
 
 import torch
-from torch.utils.data import Dataset, DataLoader, TensorDataset
-from datasets.path import get_dataset_root, validate_dataset
+from torch.utils.data import Dataset, DataLoader, TensorDataset, random_split
+
+from datasets.path import (
+    get_dataset_root,
+    get_train_directory,
+    get_test_directory,
+    validate_dataset,
+)
+from datasets.loader import discover_edf_files
+from datasets.pipeline import EEGPreprocessingPipeline, PreprocessingConfig
+from datasets.dataset import HGDDataset
 
 logger = logging.getLogger(__name__)
 
@@ -54,49 +63,164 @@ def build_dataloaders(
     """
     train_cfg = config.get("training", {})
     model_cfg = config.get("model", {})
+    dataset_cfg = config.get("dataset", {})
 
     batch_size = train_cfg.get("batch_size", 32)
     num_workers = train_cfg.get("num_workers", 0)
     seed = train_cfg.get("seed", 42)
+    synthetic_data = train_cfg.get("synthetic_data", config.get("synthetic_data", False))
+    val_split_ratio = float(train_cfg.get("validation_split", 0.2))
+    split_strategy = train_cfg.get("split_strategy", "random")
 
+    representation = dataset_cfg.get(
+        "representation",
+        config.get(
+            "representation",
+            "frequency" if config.get("frequency", {}).get("enabled", False) else "time",
+        ),
+    )
+    cache_cfg = dataset_cfg.get("cache", {})
+
+    if synthetic_data:
+        logger.info("Building synthetic dataset DataLoaders (synthetic_data=True)...")
+        dataset_root = "Synthetic (In-Memory)"
+        train_files_count = 0
+        test_files_count = 0
+
+        train_ds = create_synthetic_dataset(
+            num_samples=128,
+            num_bands=model_cfg.get("num_bands", 4),
+            num_channels=model_cfg.get("num_channels", 133),
+            num_samples_per_window=model_cfg.get("num_samples", 250),
+            num_classes=4,
+            seed=seed,
+        )
+        val_ds = create_synthetic_dataset(
+            num_samples=32,
+            num_bands=model_cfg.get("num_bands", 4),
+            num_channels=model_cfg.get("num_channels", 133),
+            num_samples_per_window=model_cfg.get("num_samples", 250),
+            num_classes=4,
+            seed=seed + 1,
+        )
+        test_ds = create_synthetic_dataset(
+            num_samples=32,
+            num_bands=model_cfg.get("num_bands", 4),
+            num_channels=model_cfg.get("num_channels", 133),
+            num_samples_per_window=model_cfg.get("num_samples", 250),
+            num_classes=4,
+            seed=seed + 2,
+        )
+    else:
+        validate_dataset(project_root=project_root)
+        dataset_root = get_dataset_root(project_root=project_root)
+        train_dir_name = get_train_directory(project_root=project_root)
+        test_dir_name = get_test_directory(project_root=project_root)
+
+        train_dir = os.path.join(dataset_root, train_dir_name)
+        test_dir = os.path.join(dataset_root, test_dir_name)
+
+        train_files = discover_edf_files(train_dir)
+        test_files = discover_edf_files(test_dir)
+
+        if not train_files:
+            raise FileNotFoundError(
+                f"No EDF files found in training directory: '{train_dir}'. "
+                f"Please check your dataset path configuration."
+            )
+        if not test_files:
+            raise FileNotFoundError(
+                f"No EDF files found in testing directory: '{test_dir}'. "
+                f"Please check your dataset path configuration."
+            )
+
+        train_files_count = len(train_files)
+        test_files_count = len(test_files)
+
+        prep_fields = {
+            k: v for k, v in config.items() if k in PreprocessingConfig.__dataclass_fields__
+        }
+        prep_fields["raw_dict"] = config
+        prep_config = PreprocessingConfig(**prep_fields)
+        pipeline = EEGPreprocessingPipeline(config=prep_config)
+
+        full_train_ds = HGDDataset(
+            file_paths=train_files,
+            pipeline=pipeline,
+            representation=representation,
+            cache_config=cache_cfg,
+        )
+        test_ds = HGDDataset(
+            file_paths=test_files,
+            pipeline=pipeline,
+            representation=representation,
+            cache_config=cache_cfg,
+        )
+
+        if split_strategy == "random":
+            total_len = len(full_train_ds)
+            val_len = int(total_len * val_split_ratio)
+            train_len = total_len - val_len
+            generator = torch.Generator().manual_seed(seed)
+            train_ds, val_ds = random_split(full_train_ds, [train_len, val_len], generator=generator)
+        else:
+            raise ValueError(f"Unsupported split strategy '{split_strategy}'. Supported strategies: ['random']")
+
+    device_name = "cuda" if torch.cuda.is_available() else "cpu"
+    window_size = config.get("window_size", 250)
     num_bands = model_cfg.get("num_bands", 4)
     num_channels = model_cfg.get("num_channels", 133)
-    num_samples_per_window = model_cfg.get("num_samples", 250)
+    num_classes = model_cfg.get("classifier", {}).get("num_classes", 4)
 
-    dataset_root = get_dataset_root(project_root=project_root)
-    logger.debug(f"Resolved dataset root in builder: {dataset_root}")
+    summary_msg = f"""
+==================================================
+Dataset Summary
+--------------------------------------------------
+Dataset Root      : {dataset_root}
 
-    # Synthetic fallback dataset for pipeline verification
-    train_ds = create_synthetic_dataset(
-        num_samples=128,
-        num_bands=num_bands,
-        num_channels=num_channels,
-        num_samples_per_window=num_samples_per_window,
-        num_classes=4,
-        seed=seed,
-    )
-    val_ds = create_synthetic_dataset(
-        num_samples=32,
-        num_bands=num_bands,
-        num_channels=num_channels,
-        num_samples_per_window=num_samples_per_window,
-        num_classes=4,
-        seed=seed + 1,
-    )
+Train EDF Files   : {train_files_count}
+Test EDF Files    : {test_files_count}
 
+Training Windows  : {len(train_ds)}
+Validation Windows: {len(val_ds)}
+Testing Windows   : {len(test_ds)}
+
+Representation    : {representation}
+Split Strategy    : {split_strategy}
+Validation Split  : {int(val_split_ratio * 100)}%
+
+Window Size       : {window_size}
+Bands             : {num_bands}
+Channels          : {num_channels}
+Classes           : {num_classes}
+
+Batch Size        : {batch_size}
+Device            : {device_name}
+==================================================
+"""
+    logger.info(summary_msg)
+
+    pin_memory = torch.cuda.is_available()
     train_loader = DataLoader(
         train_ds,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=torch.cuda.is_available(),
+        pin_memory=pin_memory,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=torch.cuda.is_available(),
+        pin_memory=pin_memory,
+    )
+    test_loader = DataLoader(
+        test_ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
     )
 
-    return train_loader, val_loader, None
+    return train_loader, val_loader, test_loader
