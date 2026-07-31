@@ -1,0 +1,42 @@
+# Hyperparameter Optimization (HPO) Configuration
+# Phase 9: Extensible Framework Architecture
+
+hpo:
+  seed: 42
+  strategy: "random"             # Options: "random", "grid", "optuna"
+  metric: "val_accuracy"
+  mode: "max"
+  n_trials: 3
+  timeout_seconds: null
+  max_epochs_per_trial: 1
+  output_dir: "outputs/hpo"
+
+search_space:
+  learning_rate:
+    type: "loguniform"
+    low: 1e-5
+    high: 1e-3
+
+  weight_decay:
+    type: "float"
+    distribution: "uniform"
+    low: 0.0001
+    high: 0.05
+
+  dropout:
+    type: "float"
+    distribution: "uniform"
+    low: 0.1
+    high: 0.5
+
+  batch_size:
+    type: "categorical"
+    values: [16, 32]
+
+  d_model:
+    type: "categorical"
+    values: [32, 64]
+
+  num_layers:
+    type: "categorical"
+    values: [1, 2]

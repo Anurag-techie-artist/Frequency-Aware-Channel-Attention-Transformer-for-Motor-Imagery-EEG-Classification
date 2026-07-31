@@ -1,0 +1,15 @@
+{
+  "total_trials": 3,
+  "completed_trials": 3,
+  "failed_trials": 0,
+  "best_trial_id": 0,
+  "best_score": 0.25,
+  "best_parameters": {
+    "learning_rate": 0.00019004375238737127,
+    "weight_decay": 0.0013480366856110802,
+    "dropout": 0.21001172734764773,
+    "batch_size": 16,
+    "d_model": 32,
+    "num_layers": 1
+  }
+}

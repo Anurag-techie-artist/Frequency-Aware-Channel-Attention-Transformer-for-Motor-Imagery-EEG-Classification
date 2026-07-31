@@ -1,0 +1,88 @@
+epoch_end: 3.5
+epoch_start: 0.5
+eps: 1e-6
+filter_high: 38.0
+filter_low: 4.0
+frequency:
+  bands:
+  - high: 8.0
+    low: 4.0
+    name: theta
+  - high: 13.0
+    low: 8.0
+    name: alpha
+  - high: 30.0
+    low: 13.0
+    name: beta
+  - high: 38.0
+    low: 30.0
+    name: gamma
+  enabled: false
+  fir_design: firwin
+hpo:
+  max_epochs_per_trial: 1
+  metric: val_accuracy
+  mode: max
+  n_trials: 3
+  output_dir: outputs/hpo
+  seed: 42
+  strategy: random
+  timeout_seconds: null
+model:
+  attention:
+    activation: gelu
+    dropout: 0.21001172734764773
+    enabled: true
+    hidden_ratio: 4
+    residual: true
+  classifier:
+    activation: gelu
+    classifier_type: mlp
+    dropout: 0.21001172734764773
+    enabled: true
+    hidden_dim: 256
+    num_classes: 4
+  transformer:
+    activation: gelu
+    batch_first: true
+    d_model: 32
+    dim_feedforward: 512
+    dropout: 0.21001172734764773
+    enabled: true
+    nhead: 8
+    num_layers: 1
+normalization: zscore
+sampling_rate: 250
+search_space:
+  batch_size:
+    type: categorical
+    values:
+    - 16
+    - 32
+  d_model:
+    type: categorical
+    values:
+    - 32
+    - 64
+  dropout:
+    distribution: uniform
+    high: 0.5
+    low: 0.1
+    type: float
+  learning_rate:
+    high: 1e-3
+    low: 1e-5
+    type: loguniform
+  num_layers:
+    type: categorical
+    values:
+    - 1
+    - 2
+  weight_decay:
+    distribution: uniform
+    high: 0.05
+    low: 0.0001
+    type: float
+training: {}
+window_size: 250
+window_stride: 50

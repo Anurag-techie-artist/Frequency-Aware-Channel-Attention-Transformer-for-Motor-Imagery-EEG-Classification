@@ -1,0 +1,80 @@
+{
+  "trial_id": 1,
+  "status": "completed",
+  "parameters": {
+    "learning_rate": 0.00022563110735889096,
+    "weight_decay": 0.04461976042847179,
+    "dropout": 0.13477553305176648,
+    "batch_size": 32,
+    "d_model": 32,
+    "num_layers": 1
+  },
+  "score": 0.1875,
+  "metrics": {
+    "accuracy": 0.1875,
+    "balanced_accuracy": 0.25,
+    "cohen_kappa": 0.0,
+    "precision": 0.046875,
+    "recall": 0.25,
+    "f1": 0.07894736842105263,
+    "weighted_f1": 0.05921052631578947,
+    "confusion_matrix": [
+      [
+        0,
+        11,
+        0,
+        0
+      ],
+      [
+        0,
+        6,
+        0,
+        0
+      ],
+      [
+        0,
+        7,
+        0,
+        0
+      ],
+      [
+        0,
+        8,
+        0,
+        0
+      ]
+    ],
+    "per_class": {
+      "class_0": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 11
+      },
+      "class_1": {
+        "precision": 0.1875,
+        "recall": 1.0,
+        "f1": 0.3157894736842105,
+        "support": 6
+      },
+      "class_2": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 7
+      },
+      "class_3": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 8
+      }
+    },
+    "loss": 1.3950977325439453
+  },
+  "duration_seconds": 7.433231499999238,
+  "checkpoint": "outputs/hpo\\trials\\trial_001\\best.pt",
+  "timestamp": "2026-07-31 17:02:30",
+  "git_commit": "4b9d23f4311c8e9e401b4eeefe46dc8797c31e6d",
+  "config_hash": "336da6fbb124a39f0c69a26eb07a22e6"
+}

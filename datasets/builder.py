@@ -51,17 +51,32 @@ def build_dataloaders(
         Tuple of (train_loader, val_loader, test_loader)
     """
     train_cfg = config.get("training", {})
+    model_cfg = config.get("model", {})
+
     batch_size = train_cfg.get("batch_size", 32)
     num_workers = train_cfg.get("num_workers", 0)
     seed = train_cfg.get("seed", 42)
 
-    # For now, construct synthetic fallback dataset to enable pipeline verification
-    # Future datasets (HGD, BCI IV-2a) connect seamlessly via Dataset interface
+    num_bands = model_cfg.get("num_bands", 4)
+    num_channels = model_cfg.get("num_channels", 133)
+    num_samples_per_window = model_cfg.get("num_samples", 250)
+
+    # Synthetic fallback dataset for pipeline verification
     train_ds = create_synthetic_dataset(
-        num_samples=128, num_classes=4, seed=seed
+        num_samples=128,
+        num_bands=num_bands,
+        num_channels=num_channels,
+        num_samples_per_window=num_samples_per_window,
+        num_classes=4,
+        seed=seed,
     )
     val_ds = create_synthetic_dataset(
-        num_samples=32, num_classes=4, seed=seed + 1
+        num_samples=32,
+        num_bands=num_bands,
+        num_channels=num_channels,
+        num_samples_per_window=num_samples_per_window,
+        num_classes=4,
+        seed=seed + 1,
     )
 
     train_loader = DataLoader(

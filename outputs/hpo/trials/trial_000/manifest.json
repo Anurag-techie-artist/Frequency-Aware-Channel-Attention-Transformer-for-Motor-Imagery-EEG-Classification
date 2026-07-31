@@ -1,0 +1,80 @@
+{
+  "trial_id": 0,
+  "status": "completed",
+  "parameters": {
+    "learning_rate": 0.00019004375238737127,
+    "weight_decay": 0.0013480366856110802,
+    "dropout": 0.21001172734764773,
+    "batch_size": 16,
+    "d_model": 32,
+    "num_layers": 1
+  },
+  "score": 0.25,
+  "metrics": {
+    "accuracy": 0.25,
+    "balanced_accuracy": 0.25,
+    "cohen_kappa": 0.0,
+    "precision": 0.0625,
+    "recall": 0.25,
+    "f1": 0.1,
+    "weighted_f1": 0.1,
+    "confusion_matrix": [
+      [
+        0,
+        0,
+        0,
+        11
+      ],
+      [
+        0,
+        0,
+        0,
+        6
+      ],
+      [
+        0,
+        0,
+        0,
+        7
+      ],
+      [
+        0,
+        0,
+        0,
+        8
+      ]
+    ],
+    "per_class": {
+      "class_0": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 11
+      },
+      "class_1": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 6
+      },
+      "class_2": {
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "support": 7
+      },
+      "class_3": {
+        "precision": 0.25,
+        "recall": 1.0,
+        "f1": 0.4,
+        "support": 8
+      }
+    },
+    "loss": 1.4054722785949707
+  },
+  "duration_seconds": 9.828127900000254,
+  "checkpoint": "outputs/hpo\\trials\\trial_000\\best.pt",
+  "timestamp": "2026-07-31 17:02:22",
+  "git_commit": "4b9d23f4311c8e9e401b4eeefe46dc8797c31e6d",
+  "config_hash": "336da6fbb124a39f0c69a26eb07a22e6"
+}
