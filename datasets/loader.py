@@ -3,6 +3,7 @@ EDF File Discovery, Loading, and Event Extraction Utilities.
 
 Provides modular functions for locating HGD dataset files, reading EDF files
 using MNE, extracting raw annotations, and mapping event codes.
+Phase 10 Patch v0.10.1: Integrates centralized dataset path resolution.
 """
 
 import os
@@ -12,6 +13,7 @@ from typing import List, Dict, Tuple, Optional
 
 import numpy as np
 import mne
+from datasets.path import get_dataset_root
 
 logger = logging.getLogger(__name__)
 
@@ -31,27 +33,31 @@ def discover_edf_files(dir_path: str) -> List[str]:
         return []
 
     edf_files = glob.glob(os.path.join(dir_path, "*.edf"))
-    
+
     # Sort files numerically (1.edf, 2.edf, ..., 14.edf) if possible
     sorted_files = sorted(
         edf_files,
         key=lambda p: int(os.path.splitext(os.path.basename(p))[0])
         if os.path.splitext(os.path.basename(p))[0].isdigit()
-        else os.path.basename(p)
+        else os.path.basename(p),
     )
     return sorted_files
 
 
-def locate_dataset(base_dir: str = "./hgd") -> Dict[str, List[str]]:
+def locate_dataset(base_dir: Optional[str] = None) -> Dict[str, List[str]]:
     """
     Locate train1 and test1 EDF files under the HGD dataset directory.
 
     Args:
-        base_dir (str): Base directory containing HGD splits.
+        base_dir (str, optional): Base directory containing HGD splits.
+                                  If None or default "./hgd", resolves via DatasetPaths.
 
     Returns:
         Dict[str, List[str]]: Dictionary with 'train' and 'test' file paths.
     """
+    if base_dir is None or base_dir == "./hgd":
+        base_dir = get_dataset_root()
+
     train_dir = os.path.join(base_dir, "train1")
     test_dir = os.path.join(base_dir, "test1")
 

@@ -3,6 +3,7 @@ Dataset & DataLoader Factory for EEGMotorImageryModel Training.
 
 Constructs PyTorch DataLoaders for training, validation, and test sets.
 Supports synthetic dataset fallbacks for standalone framework verification.
+Phase 10 Patch v0.10.1: Integrates centralized dataset path resolution.
 """
 
 import os
@@ -11,6 +12,7 @@ from typing import Dict, Any, Tuple, Optional
 
 import torch
 from torch.utils.data import Dataset, DataLoader, TensorDataset
+from datasets.path import get_dataset_root, validate_dataset
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +62,9 @@ def build_dataloaders(
     num_bands = model_cfg.get("num_bands", 4)
     num_channels = model_cfg.get("num_channels", 133)
     num_samples_per_window = model_cfg.get("num_samples", 250)
+
+    dataset_root = get_dataset_root(project_root=project_root)
+    logger.debug(f"Resolved dataset root in builder: {dataset_root}")
 
     # Synthetic fallback dataset for pipeline verification
     train_ds = create_synthetic_dataset(

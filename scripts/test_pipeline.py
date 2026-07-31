@@ -3,6 +3,7 @@ Test Script for EEG Preprocessing Pipeline (Phase 2).
 
 Loads a sample EDF recording file, runs the EEGPreprocessingPipeline,
 saves intermediate debug stage arrays to outputs/debug/, and logs pipeline statistics.
+Phase 10 Patch v0.10.1: Centralized dataset path resolution.
 
 Usage:
     python scripts/test_pipeline.py
@@ -20,6 +21,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from datasets.path import get_dataset_root, get_train_directory
 from datasets.pipeline import EEGPreprocessingPipeline
 from datasets.dataset import HGDDataset
 
@@ -39,7 +41,10 @@ def main():
     setup_logging()
     logger.info("Starting EEG Preprocessing Pipeline Test...")
 
-    sample_edf = os.path.join(PROJECT_ROOT, "hgd", "train1", "1.edf")
+    hgd_root = get_dataset_root(PROJECT_ROOT)
+    train_dir = get_train_directory(PROJECT_ROOT)
+    sample_edf = os.path.join(hgd_root, train_dir, "1.edf")
+
     if not os.path.exists(sample_edf):
         logger.error(f"Sample EDF file not found at: {sample_edf}")
         sys.exit(1)

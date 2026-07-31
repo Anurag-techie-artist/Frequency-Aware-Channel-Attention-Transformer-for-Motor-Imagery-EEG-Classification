@@ -1,0 +1,8 @@
+# Dataset Configuration (v0.10.1 Patch)
+# High-Gamma Dataset (HGD) path resolution & dataset settings
+
+dataset:
+  root: "./hgd"
+  train_directory: "train1"
+  test_directory: "test1"
+  description: "High-Gamma Dataset"

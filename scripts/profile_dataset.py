@@ -4,6 +4,7 @@ HGD Dataset Profiler Script.
 Main entry point to scan the High Gamma Dataset (HGD), extract metadata,
 compute channel-level signal statistics, validate dataset integrity,
 generate publication-quality visualizations, and export comprehensive reports.
+Phase 10 Patch v0.10.1: Centralized dataset path resolution.
 
 Usage:
     python scripts/profile_dataset.py
@@ -19,6 +20,8 @@ from typing import List, Dict, Any
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+from datasets.path import get_dataset_root, get_train_directory, get_test_directory, validate_dataset as validate_path_exists
 
 from utils.metadata import (
     scan_dataset,
@@ -110,13 +113,15 @@ def main() -> None:
 
     logger.info("Scanning dataset...")
 
-    hgd_path = os.path.join(PROJECT_ROOT, "hgd")
-    if not os.path.exists(hgd_path):
-        logger.error(f"HGD dataset directory not found at {hgd_path}!")
+    hgd_path = get_dataset_root(PROJECT_ROOT)
+    try:
+        validate_path_exists(hgd_path, PROJECT_ROOT)
+    except FileNotFoundError as e:
+        logger.error(str(e))
         sys.exit(1)
 
     # 3. Scan Dataset & Extract Metadata + Signal Stats
-    logger.info("Extracting metadata...")
+    logger.info(f"Extracting metadata from dataset root: {hgd_path}...")
     metadata_list, signal_stats_list = scan_dataset(hgd_path)
 
     # 4. Compute Statistics & Fingerprint
@@ -137,8 +142,8 @@ def main() -> None:
     plot_channel_presence_heatmap(metadata_list, os.path.join(plots_dir, "channel_presence_heatmap.png"))
 
     # Sample signals (Train and Test representative files)
-    sample_train_file = os.path.join(hgd_path, "train1", "1.edf")
-    sample_test_file = os.path.join(hgd_path, "test1", "1.edf")
+    sample_train_file = os.path.join(hgd_path, get_train_directory(PROJECT_ROOT), "1.edf")
+    sample_test_file = os.path.join(hgd_path, get_test_directory(PROJECT_ROOT), "1.edf")
 
     if os.path.exists(sample_train_file):
         plot_sample_signal(

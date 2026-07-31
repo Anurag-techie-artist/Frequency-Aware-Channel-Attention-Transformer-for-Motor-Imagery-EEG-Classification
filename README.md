@@ -6,6 +6,54 @@ A long-term research project for motor imagery (MI) electroencephalography (EEG)
 
 This repository focuses on decoding multi-class motor imagery signals from High-Gamma Dataset (HGD) EDF recordings. The goal is to incrementally develop high-performance spatio-temporal neural networks starting from baseline CNNs (EEGNet) towards Frequency-Aware Channel Attention Transformers (FA-CAT) and GAN-augmented training pipelines.
 
+---
+
+## Dataset Configuration (`v0.10.1` Patch)
+
+The dataset location is centrally resolved in **exactly one place** (`datasets/path.py`), eliminating all hardcoded paths across OS platforms (Windows, Linux, WSL, macOS) while preserving **100% backward compatibility**.
+
+### Resolution Priority Hierarchy
+
+```text
+1. Environment Variable: HGD_DATASET_ROOT
+2. configs/dataset.yaml   (dataset.root)
+3. Default Fallback:       ./hgd
+```
+
+### Setup Options
+
+#### Option 1 (Recommended): Environment Variable
+
+- **Linux / macOS**:
+  ```bash
+  export HGD_DATASET_ROOT=/path/to/hgd
+  ```
+- **WSL**:
+  ```bash
+  export HGD_DATASET_ROOT=/mnt/c/Datasets/HGD
+  ```
+- **Windows PowerShell**:
+  ```powershell
+  $env:HGD_DATASET_ROOT="D:\Datasets\HGD"
+  ```
+
+#### Option 2: Configuration File (`configs/dataset.yaml`)
+
+Edit `configs/dataset.yaml`:
+```yaml
+dataset:
+  root: "/path/to/hgd"
+  train_directory: "train1"
+  test_directory: "test1"
+  description: "High-Gamma Dataset"
+```
+
+#### Option 3: Default Repository Layout
+
+Place the `hgd/` folder directly inside the repository root (`./hgd`). No setup required!
+
+---
+
 ## Repository Structure
 
 ```
@@ -15,6 +63,7 @@ Deep Learning-based Motor Imagery EEG Classification/
 ├── baseline/
 │   └── eegnet_baseline.py   # Preserved original EEGNet implementation copy
 ├── datasets/
+│   ├── path.py              # Centralized dataset path resolution & validation
 │   ├── loader.py            # Dataset loading routines & PyTorch Dataset class
 │   ├── preprocessing.py     # Bandpass filtering & frequency decomposition
 │   └── windowing.py         # Sliding window segmentation & trial voting
@@ -22,21 +71,20 @@ Deep Learning-based Motor Imagery EEG Classification/
 ├── training/                # Training routines, loss functions, & optimizers
 ├── utils/                   # Metrics, logging, and plotting utilities
 ├── configs/                 # Experiment configuration files
+│   ├── dataset.yaml         # Centralized dataset location configuration
+│   ├── preprocessing.yaml   # Preprocessing configuration
+│   ├── model.yaml           # Model architecture configuration
+│   ├── train.yaml           # Training configuration
+│   ├── hpo.yaml             # Hyperparameter optimization configuration
+│   └── gan.yaml             # WGAN-GP data augmentation configuration
+├── augmentation/            # EEG data augmentation framework
 ├── experiments/             # Experiment execution scripts
 ├── scripts/                 # Utility & helper scripts
 ├── notebooks/               # EDA & interactive visualization notebooks
 ├── outputs/                 # Output artifacts (ignored in git)
-│   ├── checkpoints/         # Saved model weights
-│   ├── logs/                # Training logs & TensorBoard events
-│   ├── plots/               # Performance plots & confusion matrices
-│   ├── predictions/         # Prediction arrays & outputs
-│   └── reports/             # Evaluation summary metrics
 ├── README.md                # Project documentation & roadmap
 ├── requirements.txt         # Core dependencies
-├── .gitignore               # PyTorch & Python git ignore rules
-├── LICENSE                  # MIT License
-├── train.py                 # Training entry point script
-└── test.py                  # Evaluation entry point script
+└── LICENSE                  # MIT License
 ```
 
 ## Dataset Profiling
@@ -92,6 +140,7 @@ The `datasets/` package provides a modular, extensible, and configurable data pi
 
 ```
 datasets/
+├── path.py                   # Centralized dataset path resolution & validation
 ├── loader.py                 # EDF file discovery, raw MNE loading, & event extraction
 ├── preprocessing.py          # Resampling, FIR bandpass filtering, & Z-score normalization
 ├── windowing.py              # Sliding window segmentation & trial index tracking
@@ -106,26 +155,19 @@ The `EEGPreprocessingPipeline` encapsulates sequential processing stages:
 
 ```python
 from datasets import EEGPreprocessingPipeline, HGDDataset
+from datasets.path import get_dataset_root, get_train_directory
+
+hgd_root = get_dataset_root()
+train_dir = get_train_directory()
+sample_file = f"{hgd_root}/{train_dir}/1.edf"
 
 # Process a single EDF recording file
 pipeline = EEGPreprocessingPipeline(config="configs/preprocessing.yaml")
-X_windows, y_windows, trial_ids = pipeline.process("hgd/train1/1.edf")
+X_windows, y_windows, trial_ids = pipeline.process(sample_file)
 
 # Wrap in PyTorch Dataset
-dataset = HGDDataset(file_paths="hgd/train1/1.edf", pipeline=pipeline)
+dataset = HGDDataset(file_paths=sample_file, pipeline=pipeline)
 ```
-
-### Configuration (`configs/preprocessing.yaml`)
-
-Initialized with baseline default reference parameters (configurable for future experiments):
-- `sampling_rate`: `250` Hz
-- `filter_low`: `4.0` Hz
-- `filter_high`: `38.0` Hz
-- `epoch_start`: `0.5` s
-- `epoch_end`: `3.5` s
-- `window_size`: `250` samples
-- `window_stride`: `50` samples
-- `normalization`: `"zscore"`
 
 ### Testing & Equivalence Verification
 
@@ -141,149 +183,12 @@ Run unit tests verifying 100% numerical match against baseline functions:
 python -m unittest tests/test_pipeline_equivalence.py
 ```
 
-## Frequency-Aware EEG Representation (Phase 3)
+## Unit Test Verification
 
-The `datasets/transforms/` package introduces modular signal transformations. The `FrequencyRepresentation` class decomposes EEG signals into multi-band spectral representations using zero-phase FIR filtering via MNE (`mne.filter.filter_data`).
-
-### Motivation & Neurophysiological Rationale
-
-Motor Imagery (MI) tasks induce neurophysiological phenomena known as Event-Related Desynchronization (ERD) and Event-Related Synchronization (ERS). These phenomena manifest in distinct frequency bands across the sensorimotor cortex:
-- **Theta ($\mathbf{4\text{--}8\text{ Hz}}$)**: Frontal midline synchronization during task initiation and cognitive processing.
-- **Alpha ($\mathbf{8\text{--}13\text{ Hz}}$)**: Mu rhythm ERD over sensorimotor cortex during imagery execution.
-- **Beta ($\mathbf{13\text{--}30\text{ Hz}}$)**: ERD during motor execution/imagery and post-imagery ERS (beta rebound).
-- **Gamma ($\mathbf{30\text{--}38\text{ Hz}}$)**: High-frequency local network synchronization and fine motor control representation.
-
-By decomposing standard time-domain signals into multi-band spectral tensors, downstream attention and transformer architectures can dynamically weight both spatial electrode contributions and frequency band relevance.
-
-### FIR Zero-Phase Filtering
-
-To eliminate phase distortion and preserve temporal alignment across frequency bands:
-- **Filter Method**: Finite Impulse Response (FIR) filter design using `firwin`.
-- **Phase Alignment**: Forward-backward zero-phase filtering (`phase="zero"`), ensuring zero phase shift across all channels and sub-bands.
-- **Transition Bandwidth**: Automatically adjusted based on sampling rate ($250\text{ Hz}$) and window duration to prevent ringing artifacts.
-
-### Tensor Shape Transformations
-
-The transform handles both single time-domain windows and batches of trials/windows seamlessly:
-
-```
-Single Window Input : (Channels, Samples)         ---> (Bands, Channels, Samples)
-                      (133, 250)                  ---> (4, 133, 250)
-
-Batch Input         : (N, Channels, Samples)      ---> (N, Bands, Channels, Samples)
-                      (3520, 133, 250)            ---> (3520, 4, 133, 250)
-```
-
-### Representation Modes
-
-The pipeline and PyTorch dataset support two primary representation modes:
-
-1. **Time Domain Mode (`representation="time"`)**:
-   - Returns standard 3D window tensors `(N_windows, Channels, Samples)`.
-   - Preserves 100% numerical and functional equivalence with the baseline pipeline (`basefile.py`).
-
-2. **Frequency Domain Mode (`representation="frequency"`)**:
-   - Returns 4D multi-band tensors `(N_windows, Bands, Channels, Samples)`.
-   - Each sample in PyTorch `HGDDataset` yields a tensor of shape `[Bands, Channels, Samples]`.
-
-### YAML Configuration (`configs/preprocessing.yaml`)
-
-Configuration is fully declarative and parsed into `FrequencyRepresentationConfig` and `FrequencyBandConfig`:
-
-```yaml
-frequency:
-  enabled: false          # Set representation="frequency" to enable
-  fir_design: "firwin"     # Design method for mne.filter.filter_data
-  bands:
-    - name: theta
-      low: 4.0
-      high: 8.0
-    - name: alpha
-      low: 8.0
-      high: 13.0
-    - name: beta
-      low: 13.0
-      high: 30.0
-    - name: gamma
-      low: 30.0
-      high: 38.0
-```
-
-### Code Usage Example
-
-```python
-from datasets import EEGPreprocessingPipeline, HGDDataset
-
-# 1. Initialize Pipeline with configuration
-pipeline = EEGPreprocessingPipeline(config="configs/preprocessing.yaml")
-
-# 2. Extract multi-band frequency tensor: (N_windows, 4, 133, 250)
-X_freq, y_windows, trial_ids = pipeline.process("hgd/train1/1.edf", representation="frequency")
-
-# 3. Instantiate PyTorch Dataset wrapper
-dataset = HGDDataset(
-    file_paths="hgd/train1/1.edf",
-    pipeline=pipeline,
-    representation="frequency"
-)
-
-sample_tensor, label = dataset[0]
-print("PyTorch sample tensor shape:", sample_tensor.shape)  # torch.Size([4, 133, 250])
-
-# 4. Debug export mode (saves frequency_tensor.npy, frequency_metadata.json, frequency_summary.json)
-debug_dict = pipeline.process_debug("hgd/train1/1.edf", representation="frequency")
-```
-
-### Verification & Testing
-
-Run unit tests verifying configuration validation, tensor transformations, band ordering, absence of NaN/Inf values, and debug artifact export:
+Run all test suites across dataset path resolution, pipeline equivalence, model architecture, training state, evaluation metrics, HPO framework, and WGAN-GP data augmentation:
 
 ```bash
-python -m unittest tests/test_frequency_representation.py
-python -m unittest tests/test_pipeline_equivalence.py
-python scripts/test_pipeline.py
-```
-
-## Planned Roadmap
-
-1. **Phase 1: Baseline**
-   - Preserve and validate baseline pipeline (`baseline/eegnet_baseline.py`).
-   - Establish initial window-level accuracy and trial-level majority voting benchmarks.
-
-2. **Phase 2: Frequency-aware Preprocessing**
-   - Implement multi-band spectral decomposition (Sub-band filtering: Theta, Alpha, Beta, Gamma).
-   - Dynamic channel & frequency normalization routines in `datasets/preprocessing.py`.
-
-3. **Phase 3: Channel Attention**
-   - Integrate spatial and temporal Channel Attention (CA) blocks for EEG electrode relevance weighting.
-
-4. **Phase 4: Transformer Architecture**
-   - Implement spatial-temporal Transformer encoders to capture long-range temporal dependencies in MI trials.
-
-5. **Phase 5: GAN Data Augmentation**
-   - Develop Wasserstein GAN with Gradient Penalty (WGAN-GP) for synthetic trial generation to address data scarcity.
-
-6. **Phase 6: Final Evaluation & Benchmarking**
-   - Conduct cross-subject and intra-subject benchmarking.
-   - Generate comparative performance reports, confusion matrices, and ablation study plots.
-
-## Quick Start
-
-```bash
-git clone <repo-url>
-cd <repo>
-
-python -m venv .venv
-
-# Windows
-.venv\Scripts\activate
-
-# Linux/macOS
-source .venv/bin/activate
-
-python -m pip install -r requirements.txt
-
-python scripts/profile_dataset.py
+python -m unittest discover -s tests -p "test_*.py"
 ```
 
 ## License
