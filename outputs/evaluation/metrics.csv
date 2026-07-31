@@ -1,0 +1,2 @@
+accuracy,balanced_accuracy,cohen_kappa,precision,recall,f1,weighted_f1
+0.34375,0.25,0.0,0.0859375,0.25,0.12790697674418605,0.17587209302325582

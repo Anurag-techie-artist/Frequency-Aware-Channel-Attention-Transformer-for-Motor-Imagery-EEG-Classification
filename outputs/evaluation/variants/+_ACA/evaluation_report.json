@@ -1,0 +1,61 @@
+{
+  "accuracy": 0.34375,
+  "balanced_accuracy": 0.25,
+  "cohen_kappa": 0.0,
+  "precision": 0.0859375,
+  "recall": 0.25,
+  "f1": 0.12790697674418605,
+  "weighted_f1": 0.17587209302325582,
+  "confusion_matrix": [
+    [
+      11,
+      0,
+      0,
+      0
+    ],
+    [
+      6,
+      0,
+      0,
+      0
+    ],
+    [
+      7,
+      0,
+      0,
+      0
+    ],
+    [
+      8,
+      0,
+      0,
+      0
+    ]
+  ],
+  "per_class": {
+    "class_0": {
+      "precision": 0.34375,
+      "recall": 1.0,
+      "f1": 0.5116279069767442,
+      "support": 11
+    },
+    "class_1": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 6
+    },
+    "class_2": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 7
+    },
+    "class_3": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 8
+    }
+  }
+}

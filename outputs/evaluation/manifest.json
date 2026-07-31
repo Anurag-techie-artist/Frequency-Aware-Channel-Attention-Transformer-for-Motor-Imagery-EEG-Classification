@@ -1,0 +1,10 @@
+{
+  "git_commit": "f8950f94e8a49a00707b8524daa1dfcbb9deb4e9",
+  "model_version": "v0.8.0",
+  "checkpoint": "latest.pt",
+  "config_hash": "8c56fee2edb88029c8bb4c9ac7451666",
+  "evaluation_time": "2026-07-31 15:28:30",
+  "torch_version": "2.13.0+cpu",
+  "cuda_available": false,
+  "cuda_device_count": 0
+}

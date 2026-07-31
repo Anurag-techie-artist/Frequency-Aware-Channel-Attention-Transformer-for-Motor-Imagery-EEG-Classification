@@ -1,0 +1,5 @@
+Variant,Frequency,ACA,FATE,Accuracy,Balanced Accuracy,Macro F1,Cohen Kappa
+Baseline (Raw EEG),True,False,False,0.1875,0.25,0.07894736842105263,0.0
+Frequency Only,True,False,True,0.1875,0.21428571428571427,0.08108108108108109,-0.050505050505050504
++ ACA,True,True,False,0.34375,0.25,0.12790697674418605,0.0
++ FATE (Full Model),True,True,True,0.1875,0.25,0.07894736842105263,0.0
