@@ -1,5 +1,6 @@
 # Model Architecture Configuration
-# Phase 4: Adaptive Channel Attention (ACA) & Future Modules
+# Phase 4: Adaptive Channel Attention (ACA)
+# Phase 5: Frequency-Aware Transformer Encoder (FATE)
 
 model:
   attention:
@@ -8,3 +9,13 @@ model:
     dropout: 0.1
     activation: "gelu"
     residual: true
+
+  transformer:
+    enabled: true
+    d_model: 128
+    nhead: 8
+    num_layers: 4
+    dim_feedforward: 512
+    dropout: 0.1
+    activation: "gelu"
+    batch_first: true
