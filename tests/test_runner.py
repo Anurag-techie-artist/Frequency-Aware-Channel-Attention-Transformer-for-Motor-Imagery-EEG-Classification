@@ -53,6 +53,7 @@ model:
     hidden_dim: 32
 
 training:
+  synthetic_data: true
   batch_size: 8
   epochs: 1
   mixed_precision: false

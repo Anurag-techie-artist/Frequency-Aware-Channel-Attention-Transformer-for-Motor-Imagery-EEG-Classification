@@ -137,11 +137,7 @@ def build_dataloaders(
         train_files_count = len(train_files)
         test_files_count = len(test_files)
 
-        prep_fields = {
-            k: v for k, v in config.items() if k in PreprocessingConfig.__dataclass_fields__
-        }
-        prep_fields["raw_dict"] = config
-        prep_config = PreprocessingConfig(**prep_fields)
+        prep_config = PreprocessingConfig.from_dict(config)
         pipeline = EEGPreprocessingPipeline(config=prep_config)
 
         full_train_ds = HGDDataset(

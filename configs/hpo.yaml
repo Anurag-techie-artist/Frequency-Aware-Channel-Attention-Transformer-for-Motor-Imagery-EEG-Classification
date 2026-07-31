@@ -11,6 +11,10 @@ hpo:
   max_epochs_per_trial: 1
   output_dir: "outputs/hpo"
 
+training:
+  synthetic_data: true
+
+
 search_space:
   learning_rate:
     type: "loguniform"

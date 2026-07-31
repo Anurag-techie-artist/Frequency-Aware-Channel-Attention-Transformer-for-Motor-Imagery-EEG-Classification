@@ -37,6 +37,34 @@ class PreprocessingConfig:
     eps: float = 1e-6
     raw_dict: Optional[Dict[str, Any]] = None
 
+    def __post_init__(self):
+        """Ensure all configuration attribute types are strictly normalized and valid."""
+        self.sampling_rate = float(self.sampling_rate)
+        self.filter_low = float(self.filter_low)
+        self.filter_high = float(self.filter_high)
+        self.epoch_start = float(self.epoch_start)
+        self.epoch_end = float(self.epoch_end)
+        self.window_size = int(self.window_size)
+        self.window_stride = int(self.window_stride)
+        self.normalization = str(self.normalization)
+        self.eps = float(self.eps)
+
+        if self.sampling_rate <= 0:
+            raise ValueError(f"sampling_rate must be positive, got {self.sampling_rate}")
+        if self.window_size <= 0:
+            raise ValueError(f"window_size must be positive, got {self.window_size}")
+        if self.window_stride <= 0:
+            raise ValueError(f"window_stride must be positive, got {self.window_stride}")
+        if self.eps <= 0:
+            raise ValueError(f"eps must be positive, got {self.eps}")
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PreprocessingConfig":
+        """Create PreprocessingConfig from a dictionary, extracting matching fields."""
+        allowed = {k for k in cls.__dataclass_fields__ if k != "raw_dict"}
+        filtered = {k: v for k, v in data.items() if k in allowed}
+        return cls(**filtered, raw_dict=data)
+
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "PreprocessingConfig":
         """Load configuration from a YAML file."""
@@ -47,18 +75,7 @@ class PreprocessingConfig:
         with open(yaml_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
 
-        return cls(
-            sampling_rate=float(data.get("sampling_rate", 250.0)),
-            filter_low=float(data.get("filter_low", 4.0)),
-            filter_high=float(data.get("filter_high", 38.0)),
-            epoch_start=float(data.get("epoch_start", 0.5)),
-            epoch_end=float(data.get("epoch_end", 3.5)),
-            window_size=int(data.get("window_size", 250)),
-            window_stride=int(data.get("window_stride", 50)),
-            normalization=str(data.get("normalization", "zscore")),
-            eps=float(data.get("eps", 1e-6)),
-            raw_dict=data,
-        )
+        return cls.from_dict(data)
 
 
 class EEGPreprocessingPipeline:
@@ -89,7 +106,7 @@ class EEGPreprocessingPipeline:
         elif isinstance(config, str):
             self.config = PreprocessingConfig.from_yaml(config)
         elif isinstance(config, dict):
-            self.config = PreprocessingConfig(**config)
+            self.config = PreprocessingConfig.from_dict(config)
         elif isinstance(config, PreprocessingConfig):
             self.config = config
         else:

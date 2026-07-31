@@ -41,6 +41,7 @@ class TestResumeTraining(unittest.TestCase):
                     },
                 },
                 "training": {
+                    "synthetic_data": True,
                     "epochs": 2,
                     "batch_size": 8,
                     "mixed_precision": False,

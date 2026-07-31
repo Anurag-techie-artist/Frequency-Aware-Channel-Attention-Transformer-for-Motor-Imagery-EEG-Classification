@@ -40,6 +40,7 @@ class TestHPOOptimizer(unittest.TestCase):
                     "classifier": {"hidden_dim": 32},
                 },
                 "training": {
+                    "synthetic_data": True,
                     "batch_size": 8,
                     "mixed_precision": False,
                     "device": "cpu",
