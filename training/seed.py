@@ -26,3 +26,8 @@ def set_seed(seed: int = 42) -> int:
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
     return seed
+
+
+def set_global_seed(seed: int = 42) -> int:
+    """Alias for set_seed for global reproducibility manager contract."""
+    return set_seed(seed)

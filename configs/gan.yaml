@@ -1,0 +1,23 @@
+# EEG Data Augmentation Configuration (Phase 10 v0.10.0 RC1)
+# Conditional WGAN-GP Hyperparameters & Strategy Settings
+
+augmentation:
+  strategy: "wgan_gp"             # Options: "none", "wgan_gp", "mixup", "cutmix", "smote", "diffusion"
+  ratio: 0.50                      # Synthetic data augmentation ratio relative to real dataset size (0.50 = 50%)
+  seed: 42
+
+gan:
+  latent_dim: 64                   # Dimension of Gaussian noise vector z
+  num_classes: 4                   # Number of motor imagery classes
+  generator_hidden_dim: 128
+  critic_hidden_dim: 128
+  critic_steps: 1                  # Fast 1:1 Critic vs Generator updates for testing
+  gradient_penalty_lambda: 10.0    # 1-Lipschitz enforcement penalty coefficient
+  epochs: 2
+  batch_size: 32
+  learning_rate: 0.001
+  beta1: 0.5
+  beta2: 0.9
+
+output:
+  output_dir: "outputs/augmentation"
