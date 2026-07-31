@@ -1,0 +1,36 @@
+# Training Framework Configuration
+# Phase 7: EEGMotorImageryModel Training Framework
+
+training:
+  seed: 42
+  epochs: 100
+  batch_size: 32
+  num_workers: 0
+  learning_rate: 0.0003
+  weight_decay: 0.01
+  gradient_clip: 1.0
+  mixed_precision: true
+  device: "auto"
+
+optimizer:
+  type: "adamw"
+  betas: [0.9, 0.999]
+
+scheduler:
+  type: "cosine"
+  warmup_epochs: 5
+  min_lr: 1e-6
+
+checkpoint:
+  save_dir: "outputs/checkpoints"
+  save_best: true
+  monitor: "val_accuracy"
+  mode: "max"
+
+logging:
+  log_dir: "outputs/logs"
+  tensorboard: true
+  csv: true
+
+validation:
+  interval: 1
