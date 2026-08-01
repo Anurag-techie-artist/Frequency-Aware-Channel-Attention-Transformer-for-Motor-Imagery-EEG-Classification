@@ -184,6 +184,32 @@ class TestLazyDataset(unittest.TestCase):
             HGDDataset(file_paths=["/fake/sample.edf"], representation="frequency", cache_config=cache_cfg)
             self.assertEqual(mock_process.call_count, 1)
 
+    @patch.object(EEGPreprocessingPipeline, "process")
+    def test_cache_builder_resource_cleanup_sequential_processing(self, mock_process):
+        """Regression test: verify cache builder processes multiple EDF files sequentially and cleans up resources."""
+        mock_process.return_value = (
+            np.random.randn(10, 4, 133, 250).astype(np.float32),
+            np.zeros(10, dtype=np.int64),
+            np.zeros(10, dtype=np.int64),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cache_manager = CacheManager(cache_dir=tmp_dir)
+            pipeline = EEGPreprocessingPipeline()
+            files = [f"/fake/path/file_{i}.edf" for i in range(10)]
+
+            meta = cache_manager.build_cache(
+                file_paths=files,
+                pipeline=pipeline,
+                representation="frequency",
+                config_hash="test_hash_sequential_cleanup",
+                build_if_missing=True,
+            )
+
+            self.assertEqual(mock_process.call_count, 10)
+            self.assertEqual(meta["total_samples"], 100)
+            self.assertEqual(len(meta["files"]), 10)
+
 
 if __name__ == "__main__":
     unittest.main()

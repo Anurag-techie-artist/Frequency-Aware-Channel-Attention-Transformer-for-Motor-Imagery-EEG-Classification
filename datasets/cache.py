@@ -9,6 +9,7 @@ Phase 10 Patch v0.10.4: Production-Grade Lazy HGD Dataset Layer.
 import os
 import json
 import time
+import gc
 import hashlib
 import logging
 import tempfile
@@ -161,7 +162,8 @@ class CacheManager:
         """Save a PyTorch object atomically using a temporary file and rename."""
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
         tmp_path = target_path + ".tmp"
-        torch.save(obj, tmp_path)
+        with open(tmp_path, "wb") as f:
+            torch.save(obj, f)
         CacheManager._safe_replace(tmp_path, target_path)
 
     @staticmethod
@@ -341,10 +343,29 @@ class CacheManager:
                 "tensor_shape": list(X_tensor.shape),
             }
 
+            # Save metadata index incrementally so partial precomputations are safely recorded
+            self._save_metadata_index(file_paths, existing_files_meta, pipeline, representation, config_hash)
+
+            # Explicitly release large tensors and intermediate data after each cached EDF
+            del X_win, y_win, t_ids, X_tensor, y_tensor, t_tensor, data_dict
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
             if progress_callback:
                 progress_callback(idx + 1, num_invalid)
 
-        # Build complete, ordered metadata index for requested file_paths
+        return self._save_metadata_index(file_paths, existing_files_meta, pipeline, representation, config_hash)
+
+    def _save_metadata_index(
+        self,
+        file_paths: List[str],
+        existing_files_meta: Dict[str, Any],
+        pipeline: Any,
+        representation: str,
+        config_hash: str,
+    ) -> Dict[str, Any]:
+        """Helper to build and save metadata.json index atomically."""
         ordered_files_meta = []
         global_offset = 0
 
@@ -358,9 +379,19 @@ class CacheManager:
                 global_offset += n_samples
                 ordered_files_meta.append(meta_entry)
 
-        # Extract representative window size and stride if available
-        win_size = getattr(pipeline.config.windowing, "window_size_samples", 250) if hasattr(pipeline, "config") else 250
-        stride = getattr(pipeline.config.windowing, "stride_samples", 50) if hasattr(pipeline, "config") else 50
+        win_size = 250
+        stride = 50
+        if hasattr(pipeline, "config") and pipeline.config is not None:
+            cfg = pipeline.config
+            if hasattr(cfg, "window_size"):
+                win_size = getattr(cfg, "window_size", 250)
+            elif hasattr(cfg, "windowing") and hasattr(cfg.windowing, "window_size_samples"):
+                win_size = getattr(cfg.windowing, "window_size_samples", 250)
+
+            if hasattr(cfg, "window_stride"):
+                stride = getattr(cfg, "window_stride", 50)
+            elif hasattr(cfg, "windowing") and hasattr(cfg.windowing, "stride_samples"):
+                stride = getattr(cfg.windowing, "stride_samples", 50)
 
         master_metadata = {
             "cache_version": CACHE_VERSION,
@@ -374,8 +405,6 @@ class CacheManager:
             "files": ordered_files_meta,
         }
 
-        # Save metadata.json atomically
         self.atomic_json_save(master_metadata, self.metadata_path)
         logger.info(f"Updated metadata index saved to: {self.metadata_path} (Total samples: {global_offset})")
-
         return master_metadata

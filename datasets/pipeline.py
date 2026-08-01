@@ -186,13 +186,17 @@ class EEGPreprocessingPipeline:
         raw = self.resample(raw)
         raw = self.filter(raw)
         X_epochs, y_epochs = self.epoch(raw)
+        del raw
 
         if representation == "frequency":
             logger.info("Applying FrequencyRepresentation transformation to epochs...")
             X_epochs_freq, _ = self.frequency_representation.extract(X_epochs)
+            del X_epochs
             X_windows, y_windows, trial_ids = self.window(X_epochs_freq, y_epochs)
+            del X_epochs_freq, y_epochs
         else:
             X_windows, y_windows, trial_ids = self.window(X_epochs, y_epochs)
+            del X_epochs, y_epochs
 
         return X_windows, y_windows, trial_ids
 
