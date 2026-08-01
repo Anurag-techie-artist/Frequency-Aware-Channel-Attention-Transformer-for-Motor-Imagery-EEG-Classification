@@ -1,4 +1,4 @@
-# Dataset Configuration (v0.10.1 Patch)
+# Dataset Configuration (v0.10.4 Production Lazy Caching)
 # High-Gamma Dataset (HGD) path resolution & dataset settings
 
 dataset:
@@ -8,6 +8,7 @@ dataset:
   description: "High-Gamma Dataset"
   representation: "frequency"
   cache:
-    enabled: false
+    enabled: true
     directory: "outputs/cache"
-
+    max_open_cache_files: 2
+    build_if_missing: true

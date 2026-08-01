@@ -3,7 +3,7 @@ Dataset & DataLoader Factory for EEGMotorImageryModel Training.
 
 Constructs PyTorch DataLoaders for training, validation, and test sets using real
 High-Gamma Dataset (HGD) preprocessing pipeline or synthetic fallback.
-Phase 10 Patch v0.10.2: Real HGD DataLoader Integration & Pluggable Split Strategy.
+Phase 10 Patch v0.10.4: Production-Grade Lazy HGD Dataset Layer.
 """
 
 import os
@@ -22,6 +22,7 @@ from datasets.path import (
 from datasets.loader import discover_edf_files
 from datasets.pipeline import EEGPreprocessingPipeline, PreprocessingConfig
 from datasets.dataset import HGDDataset
+from datasets.cache import CACHE_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,9 @@ def build_dataloaders(
         dataset_root = "Synthetic (In-Memory)"
         train_files_count = 0
         test_files_count = 0
+        cache_status = "N/A (Synthetic)"
+        cache_dir = "N/A"
+        max_open_cache = 0
 
         train_ds = create_synthetic_dataset(
             num_samples=128,
@@ -153,6 +157,10 @@ def build_dataloaders(
             cache_config=cache_cfg,
         )
 
+        cache_status = "HIT" if full_train_ds.metadata else "MISS"
+        cache_dir = full_train_ds.cache_dir
+        max_open_cache = full_train_ds.max_open_cache_files
+
         if split_strategy == "random":
             total_len = len(full_train_ds)
             val_len = int(total_len * val_split_ratio)
@@ -162,36 +170,30 @@ def build_dataloaders(
         else:
             raise ValueError(f"Unsupported split strategy '{split_strategy}'. Supported strategies: ['random']")
 
-    device_name = "cuda" if torch.cuda.is_available() else "cpu"
     window_size = config.get("window_size", 250)
-    num_bands = model_cfg.get("num_bands", 4)
-    num_channels = model_cfg.get("num_channels", 133)
-    num_classes = model_cfg.get("classifier", {}).get("num_classes", 4)
+    stride = config.get("stride", 50)
 
     summary_msg = f"""
 ==================================================
 Dataset Summary
 --------------------------------------------------
-Dataset Root      : {dataset_root}
+Dataset Root         : {dataset_root}
+Representation       : {representation}
+Window Size          : {window_size}
+Stride               : {stride}
 
-Train EDF Files   : {train_files_count}
-Test EDF Files    : {test_files_count}
+Cache Status         : {cache_status}
+Cache Version        : {CACHE_VERSION}
+Cache Directory      : {cache_dir}
+Cached EDF Files     : {train_files_count + test_files_count}
+Open Cache Limit     : {max_open_cache}
 
-Training Windows  : {len(train_ds)}
-Validation Windows: {len(val_ds)}
-Testing Windows   : {len(test_ds)}
+Training Samples     : {len(train_ds)}
+Validation Samples   : {len(val_ds)}
+Testing Samples      : {len(test_ds)}
 
-Representation    : {representation}
-Split Strategy    : {split_strategy}
-Validation Split  : {int(val_split_ratio * 100)}%
-
-Window Size       : {window_size}
-Bands             : {num_bands}
-Channels          : {num_channels}
-Classes           : {num_classes}
-
-Batch Size        : {batch_size}
-Device            : {device_name}
+Batch Size           : {batch_size}
+Workers              : {num_workers}
 ==================================================
 """
     logger.info(summary_msg)

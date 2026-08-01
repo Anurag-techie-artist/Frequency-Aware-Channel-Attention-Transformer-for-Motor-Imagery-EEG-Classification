@@ -3,17 +3,24 @@ PyTorch HGDDataset Implementation.
 
 Provides HGDDataset wrapping windowed motor imagery EEG signals for PyTorch
 DataLoader integration. Supports both time-domain and frequency-aware multi-band representations.
+Phase 10 Patch v0.10.4: Production-Grade Lazy HGD Dataset Layer.
 """
 
 import os
 import logging
+from bisect import bisect_right
 from typing import List, Union, Optional, Tuple, Dict, Any
 
 import torch
-import numpy as np
 from torch.utils.data import Dataset
 
 from datasets.pipeline import EEGPreprocessingPipeline, PreprocessingConfig
+from datasets.cache import (
+    CacheManager,
+    FileLRUCache,
+    compute_config_hash,
+    CACHE_VERSION,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +29,8 @@ class HGDDataset(Dataset):
     """
     PyTorch Dataset wrapper for High Gamma Dataset (HGD) Motor Imagery EEG samples.
 
-    Processes single or multiple EDF files using EEGPreprocessingPipeline,
-    combining windowed samples into PyTorch tensors.
+    Uses metadata-driven index mapping (`metadata.json`) and lazy per-EDF `.pt` caching
+    via FileLRUCache to keep memory footprint low (~50-100 MB RAM) during training.
     """
 
     def __init__(
@@ -42,7 +49,11 @@ class HGDDataset(Dataset):
             pipeline: Pre-configured EEGPreprocessingPipeline instance (optional).
             config: Configuration for pipeline if pipeline is not provided (optional).
             representation: "time" for (N, Channels, Samples) or "frequency" for (N, Bands, Channels, Samples).
-            cache_config: Optional dictionary with 'enabled' (bool) and 'directory' (str).
+            cache_config: Dictionary with cache settings:
+                - enabled (bool): Default True.
+                - directory (str): Path to cache directory (default "outputs/cache").
+                - max_open_cache_files (int): Maximum open `.pt` files in RAM (default 2).
+                - build_if_missing (bool): Whether to build cache on the fly (default True).
         """
         if representation not in ("time", "frequency"):
             raise ValueError(f"Unknown representation mode '{representation}'. Supported modes: 'time', 'frequency'")
@@ -55,107 +66,127 @@ class HGDDataset(Dataset):
         else:
             self.file_paths = list(file_paths)
 
-        # Check cache if enabled
-        cache_enabled = self.cache_config.get("enabled", False)
-        cache_dir = self.cache_config.get("directory", "outputs/cache")
-
-        if cache_enabled and os.path.exists(cache_dir):
-            import hashlib
-            paths_key = "_".join(sorted(self.file_paths))
-            hash_str = hashlib.md5(f"{paths_key}_{representation}".encode("utf-8")).hexdigest()
-            cache_path = os.path.join(cache_dir, f"hgd_cache_{hash_str}.pt")
-
-            if os.path.exists(cache_path):
-                logger.info(f"Loading HGDDataset cached tensors from: {cache_path}")
-                cached_data = torch.load(cache_path)
-                self.X = cached_data["X"]
-                self.y = cached_data["y"]
-                self.trial_ids = cached_data["trial_ids"]
-                self.metadata = cached_data["metadata"]
-                return
-
         if pipeline is not None:
             self.pipeline = pipeline
         else:
             self.pipeline = EEGPreprocessingPipeline(config=config)
 
-        all_windows = []
-        all_labels = []
-        all_trial_ids = []
+        self.cache_enabled = self.cache_config.get("enabled", True)
+        self.cache_dir = self.cache_config.get("directory", "outputs/cache")
+        self.max_open_cache_files = self.cache_config.get("max_open_cache_files", 2)
+        self.build_if_missing = self.cache_config.get("build_if_missing", True)
 
-        total_trials = 0
+        self.config_hash = compute_config_hash(self.pipeline.config, self.representation)
+        self.cache_manager = CacheManager(cache_dir=self.cache_dir)
 
-        for f_path in self.file_paths:
-            logger.info(f"HGDDataset processing file ({self.representation} representation): {f_path}")
-            X_win, y_win, t_ids = self.pipeline.process(f_path, representation=self.representation)
+        # Build/validate cache and load metadata index ONLY (reads ZERO .pt files into RAM)
+        self.metadata = self.cache_manager.build_cache(
+            file_paths=self.file_paths,
+            pipeline=self.pipeline,
+            representation=self.representation,
+            config_hash=self.config_hash,
+            build_if_missing=self.build_if_missing,
+        )
 
-            all_windows.append(X_win)
-            all_labels.append(y_win)
-            # Offset trial IDs across multiple files to remain unique per trial
-            all_trial_ids.append(t_ids + total_trials)
+        self._file_entries = self.metadata.get("files", [])
+        self._start_indices = [e["start_index"] for e in self._file_entries]
+        self._end_indices = [e["end_index"] for e in self._file_entries]
+        self._total_samples = self.metadata.get("total_samples", 0)
 
-            # Count unique trials in this file
-            num_file_trials = len(np.unique(t_ids)) if len(t_ids) > 0 else 0
-            total_trials += num_file_trials
+        # Initialize LRU Cache for per-EDF sample retrieval
+        self._lru_cache = FileLRUCache(max_open_cache_files=self.max_open_cache_files)
 
-        if len(all_windows) > 0:
-            X_concat = np.concatenate(all_windows, axis=0)
-            y_concat = np.concatenate(all_labels, axis=0)
-            t_concat = np.concatenate(all_trial_ids, axis=0)
-        else:
-            X_concat = np.empty((0, 0, 0), dtype=np.float32)
-            y_concat = np.empty((0,), dtype=np.int64)
-            t_concat = np.empty((0,), dtype=np.int64)
+        # Lazy concatenated tensors cache for legacy compatibility properties (.X, .y)
+        self._cached_concat_X: Optional[torch.Tensor] = None
+        self._cached_concat_y: Optional[torch.Tensor] = None
+        self._cached_concat_trial_ids: Optional[torch.Tensor] = None
 
-        self.X = torch.tensor(X_concat, dtype=torch.float32)
-        self.y = torch.tensor(y_concat, dtype=torch.long)
-        self.trial_ids = torch.tensor(t_concat, dtype=torch.long)
-
-        self.metadata: Dict[str, Any] = {
-            "representation": self.representation,
-            "num_files": len(self.file_paths),
-            "num_trials": total_trials,
-            "num_windows": len(self.X),
-            "tensor_shape": list(self.X.shape),
-            "num_channels": self.X.shape[-2] if self.X.ndim >= 3 else 0,
-            "window_size": self.X.shape[-1] if self.X.ndim >= 3 else 0,
-            "num_bands": self.X.shape[1] if self.X.ndim == 4 else 1,
-        }
-
-        # Save to cache if enabled
-        if cache_enabled:
-            import hashlib
-            os.makedirs(cache_dir, exist_ok=True)
-            paths_key = "_".join(sorted(self.file_paths))
-            hash_str = hashlib.md5(f"{paths_key}_{representation}".encode("utf-8")).hexdigest()
-            cache_path = os.path.join(cache_dir, f"hgd_cache_{hash_str}.pt")
-            logger.info(f"Saving HGDDataset processed tensors to cache: {cache_path}")
-            torch.save(
-                {
-                    "X": self.X,
-                    "y": self.y,
-                    "trial_ids": self.trial_ids,
-                    "metadata": self.metadata,
-                },
-                cache_path,
-            )
-
-        logger.info(f"HGDDataset initialized with metadata: {self.metadata}")
+        logger.info(
+            f"HGDDataset initialized. Total samples: {self._total_samples}, "
+            f"Cached files: {len(self._file_entries)}, Config hash: {self.config_hash}"
+        )
 
     def __len__(self) -> int:
         """Return total number of cropped window samples."""
-        return len(self.X)
+        return self._total_samples
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Get single sample-label pair.
+        Get single sample-label pair using binary search index mapping and LRU file cache.
 
         Args:
-            idx (int): Sample index.
+            idx (int): Global sample index.
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor]:
                 - Sample tensor (shape: [Channels, Samples] or [Bands, Channels, Samples])
                 - Label scalar
         """
-        return self.X[idx], self.y[idx]
+        if idx < 0 or idx >= self._total_samples:
+            raise IndexingError(f"Index {idx} out of range for dataset with {self._total_samples} samples.")
+
+        # Fast O(log N) binary search mapping global index -> file entry
+        file_idx = bisect_right(self._start_indices, idx) - 1
+        file_entry = self._file_entries[file_idx]
+        local_idx = idx - file_entry["start_index"]
+
+        cache_path = os.path.join(self.cache_dir, file_entry["cache"])
+        data = self._lru_cache.get(cache_path)
+
+        return data["X"][local_idx], data["y"][local_idx]
+
+    def _load_all_for_legacy_property(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Helper method to load and concatenate all tensors for legacy property access."""
+        all_X, all_y, all_t = [], [], []
+        for entry in self._file_entries:
+            cache_path = os.path.join(self.cache_dir, entry["cache"])
+            data = torch.load(cache_path, map_location="cpu", weights_only=False)
+            all_X.append(data["X"])
+            all_y.append(data["y"])
+            all_t.append(data["trial_ids"])
+
+        if len(all_X) > 0:
+            X_concat = torch.cat(all_X, dim=0)
+            y_concat = torch.cat(all_y, dim=0)
+            t_concat = torch.cat(all_t, dim=0)
+        else:
+            X_concat = torch.empty((0, 0, 0), dtype=torch.float32)
+            y_concat = torch.empty((0,), dtype=torch.long)
+            t_concat = torch.empty((0,), dtype=torch.long)
+
+        return X_concat, y_concat, t_concat
+
+    @property
+    def X(self) -> torch.Tensor:
+        """Backward-compatible property returning concatenated feature tensor X."""
+        if self._cached_concat_X is None:
+            X_c, y_c, t_c = self._load_all_for_legacy_property()
+            self._cached_concat_X = X_c
+            self._cached_concat_y = y_c
+            self._cached_concat_trial_ids = t_c
+        return self._cached_concat_X
+
+    @property
+    def y(self) -> torch.Tensor:
+        """Backward-compatible property returning concatenated label tensor y."""
+        if self._cached_concat_y is None:
+            X_c, y_c, t_c = self._load_all_for_legacy_property()
+            self._cached_concat_X = X_c
+            self._cached_concat_y = y_c
+            self._cached_concat_trial_ids = t_c
+        return self._cached_concat_y
+
+    @property
+    def trial_ids(self) -> torch.Tensor:
+        """Backward-compatible property returning concatenated trial IDs tensor."""
+        if self._cached_concat_trial_ids is None:
+            X_c, y_c, t_c = self._load_all_for_legacy_property()
+            self._cached_concat_X = X_c
+            self._cached_concat_y = y_c
+            self._cached_concat_trial_ids = t_c
+        return self._cached_concat_trial_ids
+
+
+class IndexingError(IndexError):
+    """Custom error raised when dataset index is out of bounds."""
+    pass
