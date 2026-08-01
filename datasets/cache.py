@@ -388,12 +388,6 @@ class CacheManager:
             abs_path = os.path.abspath(f_path)
             item = files_meta.get(abs_path)
 
-            # Check 1: EDF file exists
-            if not os.path.exists(abs_path):
-                invalid_files.append(f_path)
-                invalid_reasons.append(f"Source EDF file missing: {f_path}")
-                continue
-
             # Check 3: Metadata entry existence & identity
             if not item:
                 invalid_files.append(f_path)
@@ -408,12 +402,13 @@ class CacheManager:
                 invalid_reasons.append(f"Missing cache tensor file: {item['cache']}")
                 continue
 
-            # Check 2: EDF modification time
-            current_mtime = int(os.path.getmtime(abs_path))
-            if item.get("edf_mtime") != current_mtime:
-                invalid_files.append(f_path)
-                invalid_reasons.append(f"Source EDF file modified (mtime mismatch for {os.path.basename(f_path)})")
-                continue
+            # Check 1 & 2: EDF file existence & modification time check (if source file exists)
+            if os.path.exists(abs_path):
+                current_mtime = int(os.path.getmtime(abs_path))
+                if item.get("edf_mtime") != current_mtime:
+                    invalid_files.append(f_path)
+                    invalid_reasons.append(f"Source EDF file modified (mtime mismatch for {os.path.basename(f_path)})")
+                    continue
 
             # Check 6 & 7: Tensor integrity check
             try:

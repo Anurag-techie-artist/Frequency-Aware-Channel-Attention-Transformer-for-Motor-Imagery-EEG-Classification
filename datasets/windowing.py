@@ -145,14 +145,17 @@ def extract_single_window_from_trial(
     safe_start = max(0, min(start_sample, max_start))
     end_sample = safe_start + window_size
 
-    if not isinstance(trial, torch.Tensor):
-        window_raw = torch.from_numpy(np.asarray(trial[..., safe_start:end_sample])).float()
-    else:
-        window_raw = trial[..., safe_start:end_sample].clone().float()
-
     if normalize:
-        mean = torch.mean(window_raw, dim=-1, keepdim=True)
-        std = torch.std(window_raw, dim=-1, keepdim=True, unbiased=False)
-        window_raw = (window_raw - mean) / (std + eps)
+        if not isinstance(trial, torch.Tensor):
+            trial_t = torch.from_numpy(np.asarray(trial)).float()
+        else:
+            trial_t = trial.float()
+        mean = torch.mean(trial_t, dim=-1, keepdim=True)
+        std = torch.std(trial_t, dim=-1, keepdim=True, correction=0)
+        trial_norm = (trial_t - mean) / (std + eps)
+        return trial_norm[..., safe_start:end_sample].clone()
 
-    return window_raw
+    if not isinstance(trial, torch.Tensor):
+        return torch.from_numpy(np.asarray(trial[..., safe_start:end_sample])).float()
+    else:
+        return trial[..., safe_start:end_sample].clone().float()

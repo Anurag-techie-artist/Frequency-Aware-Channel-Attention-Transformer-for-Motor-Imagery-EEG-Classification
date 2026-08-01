@@ -22,7 +22,7 @@ from datasets.path import (
 from datasets.loader import discover_edf_files
 from datasets.pipeline import EEGPreprocessingPipeline, PreprocessingConfig
 from datasets.dataset import HGDDataset
-from datasets.cache import CACHE_VERSION
+from datasets.cache import CACHE_VERSION, CacheManager, compute_config_hash
 
 logger = logging.getLogger(__name__)
 
@@ -144,12 +144,56 @@ def build_dataloaders(
 
         prep_config = PreprocessingConfig.from_dict(config)
         pipeline = EEGPreprocessingPipeline(config=prep_config)
+        config_hash = compute_config_hash(prep_config, representation)
+        cache_dir = cache_cfg.get("directory", "outputs/cache")
+        cache_manager = CacheManager(cache_dir=cache_dir)
 
-        full_train_ds = HGDDataset(
+        metadata = cache_manager.build_cache(
+            file_paths=train_files,
+            pipeline=pipeline,
+            representation=representation,
+            config_hash=config_hash,
+            build_if_missing=cache_cfg.get("build_if_missing", True),
+        )
+
+        all_entries = metadata.get("files", [])
+        requested_abs = set(os.path.abspath(p) for p in train_files)
+        file_entries = [e for e in all_entries if os.path.abspath(e["edf_path"]) in requested_abs]
+
+        all_train_trials = []
+        for entry in file_entries:
+            abs_p = os.path.abspath(entry["edf_path"])
+            n_trials = entry["num_trials"]
+            for t_idx in range(n_trials):
+                all_train_trials.append((abs_p, t_idx))
+
+        if split_strategy == "random":
+            import numpy as np
+            rng = np.random.RandomState(seed)
+            shuffled_trials = list(all_train_trials)
+            rng.shuffle(shuffled_trials)
+
+            val_len = int(len(shuffled_trials) * val_split_ratio)
+            train_len = len(shuffled_trials) - val_len
+
+            train_trial_filter = shuffled_trials[:train_len]
+            val_trial_filter = shuffled_trials[train_len:]
+        else:
+            raise ValueError(f"Unsupported split strategy '{split_strategy}'. Supported strategies: ['random']")
+
+        train_ds = HGDDataset(
             file_paths=train_files,
             pipeline=pipeline,
             representation=representation,
             cache_config=cache_cfg,
+            trial_filter=train_trial_filter,
+        )
+        val_ds = HGDDataset(
+            file_paths=train_files,
+            pipeline=pipeline,
+            representation=representation,
+            cache_config=cache_cfg,
+            trial_filter=val_trial_filter,
         )
         test_ds = HGDDataset(
             file_paths=test_files,
@@ -158,9 +202,9 @@ def build_dataloaders(
             cache_config=cache_cfg,
         )
 
-        cache_status = "HIT" if full_train_ds.metadata else "MISS"
-        cache_dir = full_train_ds.cache_dir
-        max_open_cache = full_train_ds.max_open_cache_files
+        cache_status = "HIT" if train_ds.metadata else "MISS"
+        cache_dir = train_ds.cache_dir
+        max_open_cache = train_ds.max_open_cache_files
 
         # Calculate actual disk usage of cache directory
         cache_disk_bytes = 0
@@ -169,15 +213,6 @@ def build_dataloaders(
                 for f_item in files_f:
                     cache_disk_bytes += os.path.getsize(os.path.join(root_d, f_item))
         cache_disk_gb = cache_disk_bytes / (1024 ** 3)
-
-        if split_strategy == "random":
-            total_len = len(full_train_ds)
-            val_len = int(total_len * val_split_ratio)
-            train_len = total_len - val_len
-            generator = torch.Generator().manual_seed(seed)
-            train_ds, val_ds = random_split(full_train_ds, [train_len, val_len], generator=generator)
-        else:
-            raise ValueError(f"Unsupported split strategy '{split_strategy}'. Supported strategies: ['random']")
 
     window_size = config.get("window_size", 250)
     stride = config.get("stride", 50)

@@ -42,6 +42,7 @@ class HGDDataset(Dataset):
         config: Optional[Union[PreprocessingConfig, str, Dict[str, Any]]] = None,
         representation: str = "time",
         cache_config: Optional[Dict[str, Any]] = None,
+        trial_filter: Optional[Union[List[Tuple[str, int]], set]] = None,
     ):
         """
         Initialize HGDDataset.
@@ -51,11 +52,8 @@ class HGDDataset(Dataset):
             pipeline: Pre-configured EEGPreprocessingPipeline instance (optional).
             config: Configuration for pipeline if pipeline is not provided (optional).
             representation: "time" for (N, Channels, Samples) or "frequency" for (N, Bands, Channels, Samples).
-            cache_config: Dictionary with cache settings:
-                - enabled (bool): Default True.
-                - directory (str): Path to cache directory (default "outputs/cache").
-                - max_open_cache_files (int): Maximum open `.pt` files in RAM (default 2).
-                - build_if_missing (bool): Whether to build cache on the fly (default True).
+            cache_config: Dictionary with cache settings.
+            trial_filter: Optional list or set of (edf_path, trial_idx) tuples to filter dataset trials.
         """
         if representation not in ("time", "frequency"):
             raise ValueError(f"Unknown representation mode '{representation}'. Supported modes: 'time', 'frequency'")
@@ -67,6 +65,11 @@ class HGDDataset(Dataset):
             self.file_paths = [file_paths]
         else:
             self.file_paths = list(file_paths)
+
+        if trial_filter is not None:
+            self.trial_filter = set((os.path.abspath(p), int(t)) for p, t in trial_filter)
+        else:
+            self.trial_filter = None
 
         if pipeline is not None:
             self.pipeline = pipeline
@@ -96,6 +99,8 @@ class HGDDataset(Dataset):
         requested_abs_paths = set(os.path.abspath(p) for p in self.file_paths)
         self._file_entries = [e for e in all_entries if os.path.abspath(e["edf_path"]) in requested_abs_paths]
 
+        stride = self.metadata.get("stride", 50)
+
         global_offset = 0
         self._start_indices = []
         self._end_indices = []
@@ -104,7 +109,32 @@ class HGDDataset(Dataset):
             self._start_indices.append(global_offset)
             self._end_indices.append(global_offset + n_win - 1 if n_win > 0 else global_offset)
             global_offset += n_win
-        self._total_samples = global_offset
+
+        self._window_samples = []
+        self._included_trials = []
+
+        for entry in self._file_entries:
+            abs_edf = os.path.abspath(entry["edf_path"])
+            cache_path = os.path.join(self.cache_dir, entry["cache"])
+            n_trials = entry["num_trials"]
+            trial_start_indices = entry["trial_start_indices"]
+
+            for t_idx in range(n_trials):
+                trial_key = (abs_edf, t_idx)
+                if self.trial_filter is not None and trial_key not in self.trial_filter:
+                    continue
+
+                self._included_trials.append(trial_key)
+
+                start_win = trial_start_indices[t_idx]
+                end_win = trial_start_indices[t_idx + 1]
+                n_windows = end_win - start_win
+
+                for w_sub in range(n_windows):
+                    start_sample = w_sub * stride
+                    self._window_samples.append((cache_path, t_idx, start_sample, abs_edf))
+
+        self._total_samples = len(self._window_samples)
 
         # Initialize LRU Cache for per-EDF sample retrieval
         self._lru_cache = FileLRUCache(
@@ -139,9 +169,14 @@ class HGDDataset(Dataset):
         """Return total number of cropped window samples."""
         return self._total_samples
 
+    @property
+    def included_trials(self) -> List[Tuple[str, int]]:
+        """Return list of included (edf_path, trial_idx) tuples in this dataset split."""
+        return list(getattr(self, "_included_trials", []))
+
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Get single sample-label pair using binary search trial mapping and lazy window extraction.
+        Get single sample-label pair using direct index sample mapping and lazy window extraction.
 
         Args:
             idx (int): Global sample index.
@@ -154,7 +189,29 @@ class HGDDataset(Dataset):
         if idx < 0 or idx >= self._total_samples:
             raise IndexError(f"Index {idx} out of range for dataset with {self._total_samples} samples.")
 
-        # Fast O(log N) binary search mapping global window index -> file entry
+        if hasattr(self, "_window_samples") and len(self._window_samples) == self._total_samples:
+            cache_path, trial_idx, start_sample, _ = self._window_samples[idx]
+            data = self._lru_cache.get(cache_path)
+
+            if "trials" in data:
+                trial_tensor = data["trials"][trial_idx]
+                label = data["labels"][trial_idx]
+
+                window_size = self.metadata.get("window_size", 250)
+                eps = getattr(self.pipeline.config, "eps", 1e-6) if hasattr(self.pipeline, "config") else 1e-6
+
+                window_tensor = extract_single_window_from_trial(
+                    trial=trial_tensor,
+                    start_sample=start_sample,
+                    window_size=window_size,
+                    normalize=True,
+                    eps=eps,
+                )
+                return window_tensor, label
+            else:
+                return data["X"][idx], data["y"][idx]
+
+        # O(log N) binary search fallback
         file_idx = bisect_right(self._start_indices, idx) - 1
         file_entry = self._file_entries[file_idx]
         local_window_idx = idx - file_entry["start_index"]
@@ -190,37 +247,55 @@ class HGDDataset(Dataset):
         """Helper method to load and concatenate all tensors for legacy property access."""
         all_X, all_y, all_t = [], [], []
         window_size = self.metadata.get("window_size", 250)
-        stride = self.metadata.get("stride", 50)
         eps = getattr(self.pipeline.config, "eps", 1e-6) if hasattr(self.pipeline, "config") else 1e-6
 
-        for entry in self._file_entries:
-            cache_path = os.path.join(self.cache_dir, entry["cache"])
-            data = torch.load(cache_path, map_location="cpu", weights_only=False)
+        if hasattr(self, "_window_samples") and len(self._window_samples) > 0:
+            for cache_path, trial_idx, start_sample, _ in self._window_samples:
+                data = self._lru_cache.get(cache_path)
+                trial_tensor = data["trials"][trial_idx]
+                label = data["labels"][trial_idx]
+                t_id = data["trial_ids"][trial_idx] if "trial_ids" in data else torch.tensor(trial_idx)
 
-            if "trials" in data:
-                trials = data["trials"]
-                labels = data["labels"]
-                t_ids = data["trial_ids"]
-                trial_start_indices = entry["trial_start_indices"]
+                w_tensor = extract_single_window_from_trial(
+                    trial=trial_tensor,
+                    start_sample=start_sample,
+                    window_size=window_size,
+                    normalize=True,
+                    eps=eps,
+                )
+                all_X.append(w_tensor)
+                all_y.append(label)
+                all_t.append(t_id)
+        else:
+            stride = self.metadata.get("stride", 50)
+            for entry in self._file_entries:
+                cache_path = os.path.join(self.cache_dir, entry["cache"])
+                data = torch.load(cache_path, map_location="cpu", weights_only=False)
 
-                for t_idx in range(len(labels)):
-                    n_windows = trial_start_indices[t_idx + 1] - trial_start_indices[t_idx]
-                    for w_sub in range(n_windows):
-                        s_sample = w_sub * stride
-                        w_tensor = extract_single_window_from_trial(
-                            trial=trials[t_idx],
-                            start_sample=s_sample,
-                            window_size=window_size,
-                            normalize=True,
-                            eps=eps,
-                        )
-                        all_X.append(w_tensor)
-                        all_y.append(labels[t_idx])
-                        all_t.append(t_ids[t_idx])
-            else:
-                all_X.append(data["X"])
-                all_y.append(data["y"])
-                all_t.append(data["trial_ids"])
+                if "trials" in data:
+                    trials = data["trials"]
+                    labels = data["labels"]
+                    t_ids = data["trial_ids"]
+                    trial_start_indices = entry["trial_start_indices"]
+
+                    for t_idx in range(len(labels)):
+                        n_windows = trial_start_indices[t_idx + 1] - trial_start_indices[t_idx]
+                        for w_sub in range(n_windows):
+                            s_sample = w_sub * stride
+                            w_tensor = extract_single_window_from_trial(
+                                trial=trials[t_idx],
+                                start_sample=s_sample,
+                                window_size=window_size,
+                                normalize=True,
+                                eps=eps,
+                            )
+                            all_X.append(w_tensor)
+                            all_y.append(labels[t_idx])
+                            all_t.append(t_ids[t_idx])
+                else:
+                    all_X.append(data["X"])
+                    all_y.append(data["y"])
+                    all_t.append(data["trial_ids"])
 
         if len(all_X) > 0:
             if isinstance(all_X[0], torch.Tensor) and all_X[0].ndim > 0:

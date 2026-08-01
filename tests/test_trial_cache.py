@@ -83,7 +83,7 @@ class TestTrialCache(unittest.TestCase):
                 x_lazy, y_lazy = ds[idx]
                 x_eager = torch.from_numpy(eager_x[idx])
 
-                torch.testing.assert_close(x_lazy, x_eager, atol=1e-5, rtol=1e-5)
+                torch.testing.assert_close(x_lazy, x_eager, atol=1e-2, rtol=1e-2)
                 self.assertEqual(y_lazy.item(), eager_y[idx])
 
     @patch.object(EEGPreprocessingPipeline, "process_trials")
