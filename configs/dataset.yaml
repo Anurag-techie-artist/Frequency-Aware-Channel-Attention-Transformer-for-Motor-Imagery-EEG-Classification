@@ -1,4 +1,4 @@
-# Dataset Configuration (v0.10.4 Production Lazy Caching)
+# Dataset Configuration (v0.11.0 Production Trial-Level Lazy Caching)
 # High-Gamma Dataset (HGD) path resolution & dataset settings
 
 dataset:
@@ -10,5 +10,9 @@ dataset:
   cache:
     enabled: true
     directory: "outputs/cache"
-    max_open_cache_files: 2
+    max_open_cache_files: 14
     build_if_missing: true
+  window:
+    size: 250
+    stride: 50
+    mode: "sequential"

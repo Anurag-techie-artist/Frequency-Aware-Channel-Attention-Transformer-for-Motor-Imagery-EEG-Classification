@@ -15,6 +15,7 @@ import torch
 from torch.utils.data import Dataset
 
 from datasets.pipeline import EEGPreprocessingPipeline, PreprocessingConfig
+from datasets.windowing import extract_single_window_from_trial
 from datasets.cache import (
     CacheManager,
     FileLRUCache,
@@ -29,8 +30,9 @@ class HGDDataset(Dataset):
     """
     PyTorch Dataset wrapper for High Gamma Dataset (HGD) Motor Imagery EEG samples.
 
-    Uses metadata-driven index mapping (`metadata.json`) and lazy per-EDF `.pt` caching
-    via FileLRUCache to keep memory footprint low (~50-100 MB RAM) during training.
+    Uses metadata-driven index mapping (`metadata.json`) and lazy trial-level caching
+    via FileLRUCache with on-the-fly window extraction in `__getitem__()` to keep
+    RAM footprint low (~50-150 MB RAM) and cache storage footprint minimal (~2-4 GB).
     """
 
     def __init__(
@@ -112,43 +114,102 @@ class HGDDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Get single sample-label pair using binary search index mapping and LRU file cache.
+        Get single sample-label pair using binary search trial mapping and lazy window extraction.
 
         Args:
             idx (int): Global sample index.
 
         Returns:
             Tuple[torch.Tensor, torch.Tensor]:
-                - Sample tensor (shape: [Channels, Samples] or [Bands, Channels, Samples])
+                - Sample tensor (shape: [Channels, window_size] or [Bands, Channels, window_size])
                 - Label scalar
         """
         if idx < 0 or idx >= self._total_samples:
-            raise IndexingError(f"Index {idx} out of range for dataset with {self._total_samples} samples.")
+            raise IndexError(f"Index {idx} out of range for dataset with {self._total_samples} samples.")
 
-        # Fast O(log N) binary search mapping global index -> file entry
+        # Fast O(log N) binary search mapping global window index -> file entry
         file_idx = bisect_right(self._start_indices, idx) - 1
         file_entry = self._file_entries[file_idx]
-        local_idx = idx - file_entry["start_index"]
+        local_window_idx = idx - file_entry["start_index"]
 
         cache_path = os.path.join(self.cache_dir, file_entry["cache"])
         data = self._lru_cache.get(cache_path)
 
-        return data["X"][local_idx], data["y"][local_idx]
+        if "trials" in data:
+            trial_start_indices = file_entry["trial_start_indices"]
+            trial_idx = bisect_right(trial_start_indices, local_window_idx) - 1
+            local_sample_idx = local_window_idx - trial_start_indices[trial_idx]
+
+            window_size = self.metadata.get("window_size", 250)
+            stride = self.metadata.get("stride", 50)
+            start_sample = local_sample_idx * stride
+
+            trial_tensor = data["trials"][trial_idx]
+            label = data["labels"][trial_idx]
+
+            eps = getattr(self.pipeline.config, "eps", 1e-6) if hasattr(self.pipeline, "config") else 1e-6
+            window_tensor = extract_single_window_from_trial(
+                trial=trial_tensor,
+                start_sample=start_sample,
+                window_size=window_size,
+                normalize=True,
+                eps=eps,
+            )
+            return window_tensor, label
+        else:
+            return data["X"][local_window_idx], data["y"][local_window_idx]
 
     def _load_all_for_legacy_property(self) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Helper method to load and concatenate all tensors for legacy property access."""
         all_X, all_y, all_t = [], [], []
+        window_size = self.metadata.get("window_size", 250)
+        stride = self.metadata.get("stride", 50)
+        eps = getattr(self.pipeline.config, "eps", 1e-6) if hasattr(self.pipeline, "config") else 1e-6
+
         for entry in self._file_entries:
             cache_path = os.path.join(self.cache_dir, entry["cache"])
             data = torch.load(cache_path, map_location="cpu", weights_only=False)
-            all_X.append(data["X"])
-            all_y.append(data["y"])
-            all_t.append(data["trial_ids"])
+
+            if "trials" in data:
+                trials = data["trials"]
+                labels = data["labels"]
+                t_ids = data["trial_ids"]
+                trial_start_indices = entry["trial_start_indices"]
+
+                for t_idx in range(len(labels)):
+                    n_windows = trial_start_indices[t_idx + 1] - trial_start_indices[t_idx]
+                    for w_sub in range(n_windows):
+                        s_sample = w_sub * stride
+                        w_tensor = extract_single_window_from_trial(
+                            trial=trials[t_idx],
+                            start_sample=s_sample,
+                            window_size=window_size,
+                            normalize=True,
+                            eps=eps,
+                        )
+                        all_X.append(w_tensor)
+                        all_y.append(labels[t_idx])
+                        all_t.append(t_ids[t_idx])
+            else:
+                all_X.append(data["X"])
+                all_y.append(data["y"])
+                all_t.append(data["trial_ids"])
 
         if len(all_X) > 0:
-            X_concat = torch.cat(all_X, dim=0)
-            y_concat = torch.cat(all_y, dim=0)
-            t_concat = torch.cat(all_t, dim=0)
+            if isinstance(all_X[0], torch.Tensor) and all_X[0].ndim > 0:
+                X_concat = torch.stack(all_X, dim=0) if all_X[0].ndim != 4 else torch.cat(all_X, dim=0)
+            else:
+                X_concat = torch.tensor(all_X)
+
+            if isinstance(all_y[0], torch.Tensor):
+                y_concat = torch.stack(all_y, dim=0) if all_y[0].ndim == 0 else torch.cat(all_y, dim=0)
+            else:
+                y_concat = torch.tensor(all_y, dtype=torch.long)
+
+            if isinstance(all_t[0], torch.Tensor):
+                t_concat = torch.stack(all_t, dim=0) if all_t[0].ndim == 0 else torch.cat(all_t, dim=0)
+            else:
+                t_concat = torch.tensor(all_t, dtype=torch.long)
         else:
             X_concat = torch.empty((0, 0, 0), dtype=torch.float32)
             y_concat = torch.empty((0,), dtype=torch.long)

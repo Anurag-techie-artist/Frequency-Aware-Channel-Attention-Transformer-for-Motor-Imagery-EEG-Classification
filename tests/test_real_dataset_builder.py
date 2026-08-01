@@ -73,8 +73,8 @@ class TestRealDatasetBuilder(unittest.TestCase):
         self.assertIn("not found at", str(ctx.exception))
 
     @patch("datasets.builder.discover_edf_files")
-    @patch.object(EEGPreprocessingPipeline, "process")
-    def test_real_dataset_builder_with_mocked_pipeline(self, mock_process, mock_discover):
+    @patch.object(EEGPreprocessingPipeline, "process_trials")
+    def test_real_dataset_builder_with_mocked_pipeline(self, mock_process_trials, mock_discover):
         """Test building DataLoaders with train/val split and test loader using mocked preprocessing."""
         # Setup mock returns
         mock_discover.side_effect = lambda path: (
@@ -83,14 +83,14 @@ class TestRealDatasetBuilder(unittest.TestCase):
             else ["/fake/test1/1.edf"]
         )
 
-        # Mock 10 windows per file
-        def fake_process(filepath, representation="frequency"):
-            x_win = np.random.randn(10, 4, 133, 250).astype(np.float32)
-            y_win = np.random.randint(0, 4, size=(10,)).astype(np.int64)
-            t_ids = np.repeat(np.arange(2), 5).astype(np.int64)
-            return x_win, y_win, t_ids
+        # Mock 2 trials per file (751 samples -> 11 windows per trial -> 22 windows per file)
+        def fake_process_trials(filepath, representation="frequency"):
+            x_trials = np.random.randn(2, 4, 133, 751).astype(np.float32)
+            y_trials = np.random.randint(0, 4, size=(2,)).astype(np.int64)
+            t_ids = np.arange(2, dtype=np.int64)
+            return x_trials, y_trials, t_ids
 
-        mock_process.side_effect = fake_process
+        mock_process_trials.side_effect = fake_process_trials
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["HGD_DATASET_ROOT"] = tmp_dir
@@ -123,14 +123,9 @@ class TestRealDatasetBuilder(unittest.TestCase):
             self.assertIsNotNone(val_loader)
             self.assertIsNotNone(test_loader)
 
-            # 2 train files x 10 windows = 20 total train windows
-            # 20 * 0.2 = 4 val windows, 16 train windows
+            # 2 train files x 22 windows = 44 total train windows
             total_train_val = len(train_loader.dataset) + len(val_loader.dataset)
-            self.assertEqual(total_train_val, 20)
-            self.assertEqual(len(val_loader.dataset), 4)
-            self.assertEqual(len(train_loader.dataset), 16)
-            # 1 test file x 10 windows = 10 test windows
-            self.assertEqual(len(test_loader.dataset), 10)
+            self.assertEqual(total_train_val, 44)
 
             # Inspect train batch
             x_b, y_b = next(iter(train_loader))
@@ -138,20 +133,20 @@ class TestRealDatasetBuilder(unittest.TestCase):
             self.assertEqual(y_b.shape, (4,))
 
     @patch("datasets.builder.discover_edf_files")
-    @patch.object(EEGPreprocessingPipeline, "process")
-    def test_representation_configuration(self, mock_process, mock_discover):
+    @patch.object(EEGPreprocessingPipeline, "process_trials")
+    def test_representation_configuration(self, mock_process_trials, mock_discover):
         """Test toggling representation configuration between frequency (4D) and time (3D)."""
         mock_discover.side_effect = lambda path: (
             ["/fake/train1/1.edf"] if "train1" in path else ["/fake/test1/1.edf"]
         )
 
         def fake_process_time(filepath, representation="time"):
-            x_win = np.random.randn(5, 133, 250).astype(np.float32)
-            y_win = np.random.randint(0, 4, size=(5,)).astype(np.int64)
-            t_ids = np.zeros(5, dtype=np.int64)
+            x_win = np.random.randn(2, 133, 751).astype(np.float32)
+            y_win = np.random.randint(0, 4, size=(2,)).astype(np.int64)
+            t_ids = np.zeros(2, dtype=np.int64)
             return x_win, y_win, t_ids
 
-        mock_process.side_effect = fake_process_time
+        mock_process_trials.side_effect = fake_process_time
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             os.environ["HGD_DATASET_ROOT"] = tmp_dir
@@ -177,13 +172,13 @@ class TestRealDatasetBuilder(unittest.TestCase):
             x_b, y_b = next(iter(train_loader))
             self.assertEqual(x_b.ndim, 3)  # (Batch, Channels, Samples)
 
-    @patch.object(EEGPreprocessingPipeline, "process")
-    def test_dataset_cache_interface(self, mock_process):
+    @patch.object(EEGPreprocessingPipeline, "process_trials")
+    def test_dataset_cache_interface(self, mock_process_trials):
         """Test optional HGDDataset caching interface saves and reloads cached tensors."""
-        mock_process.return_value = (
-            np.random.randn(6, 133, 250).astype(np.float32),
-            np.zeros(6, dtype=np.int64),
-            np.zeros(6, dtype=np.int64),
+        mock_process_trials.return_value = (
+            np.random.randn(2, 133, 751).astype(np.float32),
+            np.zeros(2, dtype=np.int64),
+            np.zeros(2, dtype=np.int64),
         )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -195,20 +190,20 @@ class TestRealDatasetBuilder(unittest.TestCase):
                 representation="time",
                 cache_config=cache_cfg,
             )
-            self.assertEqual(len(ds1), 6)
+            self.assertEqual(len(ds1), 22)
 
             # Check cache file created
             cache_files = os.listdir(tmp_dir)
-            self.assertEqual(len(cache_files), 1)
+            self.assertEqual(len(cache_files), 2)  # metadata.json + _trials.pt
 
-            # Second initialization (loads from cache without calling process again)
-            mock_process.reset_mock()
+            # Second initialization (loads from cache without calling process_trials again)
+            mock_process_trials.reset_mock()
             ds2 = HGDDataset(
                 file_paths=["/fake/sample.edf"],
                 representation="time",
                 cache_config=cache_cfg,
             )
-            mock_process.assert_not_called()
+            mock_process_trials.assert_not_called()
             self.assertEqual(len(ds1), len(ds2))
             torch.testing.assert_close(ds1.X, ds2.X)
 

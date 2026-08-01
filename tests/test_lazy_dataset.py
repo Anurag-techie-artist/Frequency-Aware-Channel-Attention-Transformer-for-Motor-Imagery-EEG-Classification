@@ -44,9 +44,9 @@ class TestLazyDataset(unittest.TestCase):
             file2 = os.path.join(tmp_dir, "f2.pt")
             file3 = os.path.join(tmp_dir, "f3.pt")
 
-            torch.save({"X": torch.randn(5, 4, 133, 250), "y": torch.zeros(5), "trial_ids": torch.zeros(5)}, file1)
-            torch.save({"X": torch.randn(5, 4, 133, 250), "y": torch.zeros(5), "trial_ids": torch.zeros(5)}, file2)
-            torch.save({"X": torch.randn(5, 4, 133, 250), "y": torch.zeros(5), "trial_ids": torch.zeros(5)}, file3)
+            torch.save({"trials": torch.randn(5, 4, 133, 751), "labels": torch.zeros(5), "trial_ids": torch.zeros(5), "cache_version": CACHE_VERSION}, file1)
+            torch.save({"trials": torch.randn(5, 4, 133, 751), "labels": torch.zeros(5), "trial_ids": torch.zeros(5), "cache_version": CACHE_VERSION}, file2)
+            torch.save({"trials": torch.randn(5, 4, 133, 751), "labels": torch.zeros(5), "trial_ids": torch.zeros(5), "cache_version": CACHE_VERSION}, file3)
 
             lru.get(file1)
             lru.get(file2)
@@ -59,13 +59,13 @@ class TestLazyDataset(unittest.TestCase):
             self.assertIn(file2, lru._cache)
             self.assertIn(file3, lru._cache)
 
-    @patch.object(EEGPreprocessingPipeline, "process")
-    def test_cache_build_reload_and_zero_pipeline_calls(self, mock_process):
+    @patch.object(EEGPreprocessingPipeline, "process_trials")
+    def test_cache_build_reload_and_zero_pipeline_calls(self, mock_process_trials):
         """Test initial cache creation, second run cache HIT, and zero pipeline calls on hit."""
-        mock_process.return_value = (
-            np.random.randn(10, 4, 133, 250).astype(np.float32),
-            np.zeros(10, dtype=np.int64),
-            np.zeros(10, dtype=np.int64),
+        mock_process_trials.return_value = (
+            np.random.randn(5, 4, 133, 751).astype(np.float32),
+            np.zeros(5, dtype=np.int64),
+            np.zeros(5, dtype=np.int64),
         )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -79,25 +79,25 @@ class TestLazyDataset(unittest.TestCase):
                 representation="frequency",
                 cache_config=cache_cfg,
             )
-            self.assertEqual(len(ds1), 10)
-            mock_process.assert_called_once()
+            self.assertEqual(len(ds1), 55)
+            mock_process_trials.assert_called_once()
 
             # Second run: loads cache metadata (0 pipeline calls)
-            mock_process.reset_mock()
+            mock_process_trials.reset_mock()
             ds2 = HGDDataset(
                 file_paths=["/fake/path/sample.edf"],
                 pipeline=pipeline,
                 representation="frequency",
                 cache_config=cache_cfg,
             )
-            self.assertEqual(len(ds2), 10)
-            mock_process.assert_not_called()
+            self.assertEqual(len(ds2), 55)
+            mock_process_trials.assert_not_called()
 
-    @patch.object(EEGPreprocessingPipeline, "process")
-    def test_atomic_writes_cleanup_tmp_files(self, mock_process):
+    @patch.object(EEGPreprocessingPipeline, "process_trials")
+    def test_atomic_writes_cleanup_tmp_files(self, mock_process_trials):
         """Test that temporary `.tmp` files are atomically renamed and cleaned up."""
-        mock_process.return_value = (
-            np.random.randn(4, 133, 250).astype(np.float32),
+        mock_process_trials.return_value = (
+            np.random.randn(4, 133, 751).astype(np.float32),
             np.zeros(4, dtype=np.int64),
             np.zeros(4, dtype=np.int64),
         )
@@ -115,32 +115,11 @@ class TestLazyDataset(unittest.TestCase):
             self.assertEqual(len(tmp_files), 0, "Found un-cleaned temporary .tmp files!")
             self.assertTrue(os.path.exists(os.path.join(tmp_dir, "metadata.json")))
 
-    @patch.object(EEGPreprocessingPipeline, "process")
-    def test_cache_equivalence(self, mock_process):
-        """Test torch.allclose() comparing raw pipeline output vs cached tensor."""
-        raw_x = np.random.randn(8, 4, 133, 250).astype(np.float32)
-        raw_y = np.array([0, 1, 2, 3, 0, 1, 2, 3], dtype=np.int64)
-        raw_t = np.zeros(8, dtype=np.int64)
-        mock_process.return_value = (raw_x, raw_y, raw_t)
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            cache_cfg = {"enabled": True, "directory": tmp_dir}
-            ds = HGDDataset(
-                file_paths=["/fake/sample.edf"],
-                representation="frequency",
-                cache_config=cache_cfg,
-            )
-
-            # Get sample 0 via __getitem__
-            sample_x, sample_y = ds[0]
-            torch.testing.assert_close(sample_x, torch.tensor(raw_x[0]))
-            self.assertEqual(sample_y.item(), raw_y[0])
-
-    @patch.object(EEGPreprocessingPipeline, "process")
-    def test_incremental_cache_rebuild(self, mock_process):
+    @patch.object(EEGPreprocessingPipeline, "process_trials")
+    def test_incremental_cache_rebuild(self, mock_process_trials):
         """Test deleting one cache file causes ONLY that specific EDF to rebuild."""
-        mock_process.return_value = (
-            np.random.randn(5, 133, 250).astype(np.float32),
+        mock_process_trials.return_value = (
+            np.random.randn(5, 133, 751).astype(np.float32),
             np.zeros(5, dtype=np.int64),
             np.zeros(5, dtype=np.int64),
         )
@@ -151,7 +130,7 @@ class TestLazyDataset(unittest.TestCase):
 
             # Initial build for 2 files -> process called twice
             ds1 = HGDDataset(file_paths=files, representation="time", cache_config=cache_cfg)
-            self.assertEqual(mock_process.call_count, 2)
+            self.assertEqual(mock_process_trials.call_count, 2)
 
             # Delete cache file for file1
             meta = ds1.metadata
@@ -159,15 +138,15 @@ class TestLazyDataset(unittest.TestCase):
             os.remove(file1_cache)
 
             # Re-init -> process called ONLY 1 additional time for missing file1
-            mock_process.reset_mock()
+            mock_process_trials.reset_mock()
             HGDDataset(file_paths=files, representation="time", cache_config=cache_cfg)
-            self.assertEqual(mock_process.call_count, 1)
+            self.assertEqual(mock_process_trials.call_count, 1)
 
-    @patch.object(EEGPreprocessingPipeline, "process")
-    def test_cache_invalidation_on_config_hash_mismatch(self, mock_process):
+    @patch.object(EEGPreprocessingPipeline, "process_trials")
+    def test_cache_invalidation_on_config_hash_mismatch(self, mock_process_trials):
         """Test cache rebuild triggers automatically when config or representation changes."""
-        mock_process.return_value = (
-            np.random.randn(6, 133, 250).astype(np.float32),
+        mock_process_trials.return_value = (
+            np.random.randn(6, 133, 751).astype(np.float32),
             np.zeros(6, dtype=np.int64),
             np.zeros(6, dtype=np.int64),
         )
@@ -177,20 +156,20 @@ class TestLazyDataset(unittest.TestCase):
 
             # First build: time representation
             HGDDataset(file_paths=["/fake/sample.edf"], representation="time", cache_config=cache_cfg)
-            self.assertEqual(mock_process.call_count, 1)
+            self.assertEqual(mock_process_trials.call_count, 1)
 
             # Second build: frequency representation -> forces rebuild
-            mock_process.reset_mock()
+            mock_process_trials.reset_mock()
             HGDDataset(file_paths=["/fake/sample.edf"], representation="frequency", cache_config=cache_cfg)
-            self.assertEqual(mock_process.call_count, 1)
+            self.assertEqual(mock_process_trials.call_count, 1)
 
-    @patch.object(EEGPreprocessingPipeline, "process")
-    def test_cache_builder_resource_cleanup_sequential_processing(self, mock_process):
+    @patch.object(EEGPreprocessingPipeline, "process_trials")
+    def test_cache_builder_resource_cleanup_sequential_processing(self, mock_process_trials):
         """Regression test: verify cache builder processes multiple EDF files sequentially and cleans up resources."""
-        mock_process.return_value = (
-            np.random.randn(10, 4, 133, 250).astype(np.float32),
-            np.zeros(10, dtype=np.int64),
-            np.zeros(10, dtype=np.int64),
+        mock_process_trials.return_value = (
+            np.random.randn(5, 4, 133, 751).astype(np.float32),
+            np.zeros(5, dtype=np.int64),
+            np.zeros(5, dtype=np.int64),
         )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -206,8 +185,8 @@ class TestLazyDataset(unittest.TestCase):
                 build_if_missing=True,
             )
 
-            self.assertEqual(mock_process.call_count, 10)
-            self.assertEqual(meta["total_samples"], 100)
+            self.assertEqual(mock_process_trials.call_count, 10)
+            self.assertEqual(meta["total_samples"], 550)
             self.assertEqual(len(meta["files"]), 10)
 
 

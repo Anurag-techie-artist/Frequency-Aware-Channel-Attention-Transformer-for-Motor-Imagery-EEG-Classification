@@ -1,0 +1,39 @@
+{
+    "sampling_rate": 250.0,
+    "frequency_bands": [
+        {
+            "name": "theta",
+            "low": 4.0,
+            "high": 8.0
+        },
+        {
+            "name": "alpha",
+            "low": 8.0,
+            "high": 13.0
+        },
+        {
+            "name": "beta",
+            "low": 13.0,
+            "high": 30.0
+        },
+        {
+            "name": "gamma",
+            "low": 30.0,
+            "high": 38.0
+        }
+    ],
+    "tensor_shape": [
+        320,
+        4,
+        133,
+        751
+    ],
+    "dtype": "float32",
+    "timestamp": "2026-08-01T15:30:26.989990",
+    "filter_type": "FIR (zero-phase)",
+    "execution_time_seconds": 18.858,
+    "filter_parameters": {
+        "fir_design": "firwin",
+        "phase": "zero"
+    }
+}

@@ -1,0 +1,18 @@
+{
+    "bands": 4,
+    "band_names": [
+        "theta",
+        "alpha",
+        "beta",
+        "gamma"
+    ],
+    "shape": [
+        3520,
+        4,
+        133,
+        250
+    ],
+    "dtype": "float32",
+    "sampling_rate": 250.0,
+    "execution_time_seconds": 18.858
+}

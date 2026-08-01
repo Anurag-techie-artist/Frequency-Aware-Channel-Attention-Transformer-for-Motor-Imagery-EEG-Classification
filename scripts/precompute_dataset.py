@@ -34,19 +34,25 @@ logger = logging.getLogger("precompute_dataset")
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Precompute HGD Dataset Cache")
+    parser = argparse.ArgumentParser(description="Precompute HGD Trial Dataset Cache (v0.11.0)")
     parser.add_argument(
         "--config",
         type=str,
         default="configs/train.yaml",
         help="Path to training config YAML file",
     )
+    parser.add_argument(
+        "--file",
+        type=str,
+        default=None,
+        help="Optional relative or absolute path to a single EDF file to target for cache rebuild",
+    )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    logger.info(f"Starting dataset cache precomputation with config: {args.config}")
+    logger.info(f"Starting dataset trial cache precomputation with config: {args.config}")
 
     config = load_master_config(train_cfg_path=args.config, project_root=PROJECT_ROOT)
     dataset_cfg = config.get("dataset", {})
@@ -72,6 +78,23 @@ def main():
         raise FileNotFoundError(f"No testing EDF files found in: {test_dir}")
 
     all_files = train_files + test_files
+
+    if args.file:
+        target_abs = os.path.abspath(args.file)
+        if not os.path.isabs(args.file):
+            target_abs = os.path.abspath(os.path.join(PROJECT_ROOT, args.file))
+            if not os.path.exists(target_abs):
+                target_abs = os.path.abspath(os.path.join(dataset_root, args.file))
+        
+        target_match = [f for f in all_files if os.path.abspath(f) == target_abs or os.path.basename(f) == os.path.basename(args.file)]
+        if not target_match:
+            raise FileNotFoundError(f"Target file {args.file} not found in discovered dataset files.")
+        
+        logger.info(f"Targeting single EDF file for cache rebuild: {target_match[0]}")
+        files_to_build = target_match
+    else:
+        files_to_build = all_files
+
     logger.info(f"Discovered {len(train_files)} train files and {len(test_files)} test files.")
 
     prep_config = PreprocessingConfig.from_dict(config)
@@ -82,7 +105,7 @@ def main():
 
     t0 = time.time()
     meta = cache_manager.build_cache(
-        file_paths=all_files,
+        file_paths=all_files if not args.file else files_to_build,
         pipeline=pipeline,
         representation=representation,
         config_hash=config_hash,
@@ -90,12 +113,21 @@ def main():
     )
     elapsed = time.time() - t0
 
+    cache_disk_bytes = 0
+    if os.path.exists(cache_dir):
+        for root_d, _, files_f in os.walk(cache_dir):
+            for f_item in files_f:
+                cache_disk_bytes += os.path.getsize(os.path.join(root_d, f_item))
+    cache_disk_gb = cache_disk_bytes / (1024 ** 3)
+
     print("\n" + "=" * 50)
-    print("Cache created")
-    print(f"{len(train_files)} train tensors")
-    print(f"{len(test_files)} test tensors")
-    print(f"Total Samples: {meta.get('total_samples', 0)}")
-    print(f"Execution Time: {elapsed:.2f} seconds")
+    print("Trial Cache Created / Updated (v0.11.0)")
+    print(f"Train EDF Files : {len(train_files)}")
+    print(f"Test EDF Files  : {len(test_files)}")
+    print(f"Total Trials    : {sum(f.get('num_trials', 0) for f in meta.get('files', []))}")
+    print(f"Total Windows   : {meta.get('total_samples', 0)}")
+    print(f"Actual Disk Size: {cache_disk_gb:.2f} GB")
+    print(f"Execution Time  : {elapsed:.2f} seconds")
     print("=" * 50 + "\n")
 
 

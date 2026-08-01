@@ -196,9 +196,40 @@ class EEGPreprocessingPipeline:
             del X_epochs_freq, y_epochs
         else:
             X_windows, y_windows, trial_ids = self.window(X_epochs, y_epochs)
-            del X_epochs, y_epochs
-
         return X_windows, y_windows, trial_ids
+
+    def process_trials(self, filepath: str, representation: str = "time") -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Run end-to-end pipeline up to trial extraction/frequency transformation without windowing.
+
+        Args:
+            filepath (str): Path to EDF recording file.
+            representation (str): "time" or "frequency".
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray, np.ndarray]:
+                - X_trials: Epoched trial signals array (shape: [N_trials, Channels, Times] or [N_trials, Bands, Channels, Times])
+                - y_trials: Trial labels array (shape: [N_trials])
+                - trial_ids: Sequential trial index array (shape: [N_trials])
+        """
+        if representation not in ("time", "frequency"):
+            raise ValueError(f"Unknown representation mode '{representation}'. Supported modes: 'time', 'frequency'")
+
+        raw = self.load_raw(filepath)
+        raw = self.resample(raw)
+        raw = self.filter(raw)
+        X_epochs, y_epochs = self.epoch(raw)
+        del raw
+
+        trial_ids = np.arange(len(y_epochs), dtype=np.int64)
+
+        if representation == "frequency":
+            logger.info("Applying FrequencyRepresentation transformation to trial epochs...")
+            X_trials, _ = self.frequency_representation.extract(X_epochs)
+            del X_epochs
+            return X_trials, y_epochs, trial_ids
+
+        return X_epochs, y_epochs, trial_ids
 
     def process_debug(self, filepath: str, representation: str = "time") -> Dict[str, Any]:
         """

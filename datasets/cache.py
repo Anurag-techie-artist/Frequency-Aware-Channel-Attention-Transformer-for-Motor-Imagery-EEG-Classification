@@ -21,7 +21,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 
 def compute_config_hash(
@@ -84,8 +84,8 @@ def compute_config_hash(
 
 class FileLRUCache:
     """
-    Least Recently Used (LRU) cache for pre-processed per-EDF `.pt` PyTorch tensor files.
-    Ensures that only a maximum of `max_open_cache_files` tensors reside in RAM simultaneously.
+    Least Recently Used (LRU) cache for pre-processed per-EDF trial `.pt` PyTorch tensor files.
+    Ensures that only a maximum of `max_open_cache_files` trial tensors reside in RAM simultaneously.
     Tensors are loaded explicitly onto CPU via `map_location='cpu'`.
     """
 
@@ -97,17 +97,17 @@ class FileLRUCache:
             max_open_cache_files (int): Maximum number of EDF `.pt` files kept in memory.
         """
         self.max_open_cache_files = max(1, max_open_cache_files)
-        self._cache: OrderedDict[str, Dict[str, torch.Tensor]] = OrderedDict()
+        self._cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 
-    def get(self, cache_file_path: str) -> Dict[str, torch.Tensor]:
+    def get(self, cache_file_path: str) -> Dict[str, Any]:
         """
-        Retrieve tensor dictionary from cache, loading from disk on cache miss.
+        Retrieve trial dictionary from cache, loading from disk on cache miss.
 
         Args:
             cache_file_path (str): Absolute path to `.pt` cache file.
 
         Returns:
-            Dict[str, torch.Tensor]: Dictionary containing "X", "y", "trial_ids".
+            Dict[str, Any]: Dictionary containing "trials", "labels", "trial_ids".
         """
         if cache_file_path in self._cache:
             self._cache.move_to_end(cache_file_path)
@@ -118,6 +118,10 @@ class FileLRUCache:
 
         # Load tensor on CPU strictly
         data = torch.load(cache_file_path, map_location="cpu", weights_only=False)
+
+        # Integrity verification
+        if data.get("cache_version") != CACHE_VERSION:
+            raise ValueError(f"Cache file {cache_file_path} is incompatible version {data.get('cache_version')}")
 
         # Evict oldest entry if capacity reached
         if len(self._cache) >= self.max_open_cache_files:
@@ -137,7 +141,7 @@ class FileLRUCache:
 
 class CacheManager:
     """
-    Manages cache building, validation, incremental rebuilding, atomic I/O,
+    Manages trial-level cache building, validation, incremental rebuilding, atomic I/O,
     and metadata index management for HGD EEG pre-processed files.
     """
 
@@ -187,6 +191,18 @@ class CacheManager:
             logger.warning(f"Failed to read metadata.json from {self.metadata_path}: {e}")
             return None
 
+    def purge_legacy_cache(self) -> None:
+        """Phase 0 Migration: Remove legacy CACHE_VERSION 1 files to prevent stale artifacts."""
+        if os.path.exists(self.cache_dir):
+            logger.info("Phase 0 Migration: Purging legacy window-cache files from cache directory...")
+            for fname in os.listdir(self.cache_dir):
+                fpath = os.path.join(self.cache_dir, fname)
+                try:
+                    if os.path.isfile(fpath):
+                        os.remove(fpath)
+                except Exception as e:
+                    logger.warning(f"Could not remove stale file {fpath}: {e}")
+
     def validate_cache(
         self,
         file_paths: List[str],
@@ -194,7 +210,7 @@ class CacheManager:
         config_hash: str,
     ) -> Tuple[bool, List[str]]:
         """
-        Validate whether cache exists and matches configuration, version, and source mtimes.
+        Validate whether trial cache exists and matches configuration, version, and source mtimes.
 
         Args:
             file_paths: List of EDF file paths expected in dataset.
@@ -213,13 +229,14 @@ class CacheManager:
 
         if meta.get("cache_version") != CACHE_VERSION:
             logger.info(
-                f"Cache version mismatch. Expected version={CACHE_VERSION}, found version={meta.get('cache_version')}. Rebuilding cache..."
+                f"Cache version mismatch. Expected version={CACHE_VERSION}, found version={meta.get('cache_version')}."
             )
+            self.purge_legacy_cache()
             return False, list(file_paths)
 
         if meta.get("config_hash") != config_hash:
             logger.info(
-                f"Cache version mismatch.\nExpected:\nhash={config_hash}\n\nFound:\nhash={meta.get('config_hash')}\n\nRebuilding cache..."
+                f"Cache configuration hash mismatch.\nExpected: {config_hash}\nFound: {meta.get('config_hash')}\nRebuilding..."
             )
             return False, list(file_paths)
 
@@ -269,11 +286,11 @@ class CacheManager:
         progress_callback: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
-        Build or incrementally update per-EDF cache `.pt` files and `metadata.json`.
+        Build or incrementally update per-EDF trial cache `.pt` files and `metadata.json`.
 
         Args:
             file_paths: List of EDF file paths to include in cache.
-            pipeline: EEGPreprocessingPipeline instance for window extraction.
+            pipeline: EEGPreprocessingPipeline instance for trial processing.
             representation: "time" or "frequency".
             config_hash: Current SHA256 configuration hash string.
             build_if_missing: If False and cache missing, raises RuntimeError.
@@ -301,16 +318,34 @@ class CacheManager:
             item["edf_path"]: item for item in existing_meta.get("files", [])
         }
 
+        # Extract representative window size and stride
+        win_size = 250
+        stride = 50
+        if hasattr(pipeline, "config") and pipeline.config is not None:
+            cfg = pipeline.config
+            if hasattr(cfg, "window_size"):
+                win_size = int(getattr(cfg, "window_size", 250))
+            elif hasattr(cfg, "windowing") and hasattr(cfg.windowing, "window_size_samples"):
+                win_size = int(getattr(cfg.windowing, "window_size_samples", 250))
+
+            if hasattr(cfg, "window_stride"):
+                stride = int(getattr(cfg, "window_stride", 50))
+            elif hasattr(cfg, "windowing") and hasattr(cfg.windowing, "stride_samples"):
+                stride = int(getattr(cfg.windowing, "stride_samples", 50))
+
         # Process each EDF requiring build
         num_invalid = len(invalid_files)
         for idx, f_path in enumerate(invalid_files):
             abs_path = os.path.abspath(f_path)
-            logger.info(f"[{idx+1}/{num_invalid}] Preprocessing EDF for cache: {f_path}")
+            logger.info(f"[{idx+1}/{num_invalid}] Preprocessing EDF trials for cache: {f_path}")
 
-            X_win, y_win, t_ids = pipeline.process(f_path, representation=representation)
+            if hasattr(pipeline, "process_trials"):
+                X_trials, y_trials, t_ids = pipeline.process_trials(f_path, representation=representation)
+            else:
+                X_trials, y_trials, t_ids = pipeline.process(f_path, representation=representation)
 
-            X_tensor = torch.tensor(X_win, dtype=torch.float32)
-            y_tensor = torch.tensor(y_win, dtype=torch.long)
+            X_tensor = torch.tensor(X_trials, dtype=torch.float32)
+            y_tensor = torch.tensor(y_trials, dtype=torch.long)
             t_tensor = torch.tensor(t_ids, dtype=torch.long)
 
             mtime = int(os.path.getmtime(abs_path)) if os.path.exists(abs_path) else 0
@@ -319,35 +354,51 @@ class CacheManager:
             split_dir = os.path.basename(os.path.dirname(f_path))
             base_name = os.path.splitext(os.path.basename(f_path))[0]
             dir_hash = hashlib.md5(os.path.dirname(abs_path).encode("utf-8")).hexdigest()[:6]
-            cache_filename = f"{split_dir}_{base_name}_{representation}_{dir_hash}.pt"
+            cache_filename = f"{split_dir}_{base_name}_{representation}_{dir_hash}_trials.pt"
             cache_filepath = os.path.join(self.cache_dir, cache_filename)
 
-            # Atomic save of `.pt` file
+            # Save per-trial data dict
             data_dict = {
-                "X": X_tensor,
-                "y": y_tensor,
+                "trials": X_tensor,
+                "labels": y_tensor,
                 "trial_ids": t_tensor,
                 "edf_path": abs_path,
                 "edf_mtime": mtime,
                 "config_hash": config_hash,
                 "cache_version": CACHE_VERSION,
+                "representation": representation,
+                "dtype": str(X_tensor.dtype),
             }
             self.atomic_torch_save(data_dict, cache_filepath)
+
+            # Precalculate cumulative trial start window indices for robust O(log N) binary search
+            n_trials = len(y_trials)
+            trial_length_samples = X_trials.shape[-1]
+            trial_start_indices = [0]
+            cumulative_windows = 0
+
+            for trial_idx in range(n_trials):
+                num_windows_in_trial = len(range(0, trial_length_samples - win_size + 1, stride))
+                cumulative_windows += num_windows_in_trial
+                trial_start_indices.append(cumulative_windows)
 
             existing_files_meta[abs_path] = {
                 "edf_path": abs_path,
                 "cache": cache_filename,
-                "samples": len(y_tensor),
+                "num_trials": n_trials,
+                "trial_length_samples": trial_length_samples,
+                "trial_start_indices": trial_start_indices,
+                "total_windows": cumulative_windows,
                 "edf_mtime": mtime,
                 "config_hash": config_hash,
                 "tensor_shape": list(X_tensor.shape),
             }
 
-            # Save metadata index incrementally so partial precomputations are safely recorded
+            # Save metadata index incrementally so partial builds are safely saved
             self._save_metadata_index(file_paths, existing_files_meta, pipeline, representation, config_hash)
 
-            # Explicitly release large tensors and intermediate data after each cached EDF
-            del X_win, y_win, t_ids, X_tensor, y_tensor, t_tensor, data_dict
+            # Explicitly release large arrays and intermediate tensors after each EDF
+            del X_trials, y_trials, t_ids, X_tensor, y_tensor, t_tensor, data_dict
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -373,10 +424,10 @@ class CacheManager:
             abs_path = os.path.abspath(f_path)
             if abs_path in existing_files_meta:
                 meta_entry = dict(existing_files_meta[abs_path])
-                n_samples = meta_entry["samples"]
+                n_windows = meta_entry["total_windows"]
                 meta_entry["start_index"] = global_offset
-                meta_entry["end_index"] = global_offset + n_samples - 1 if n_samples > 0 else global_offset
-                global_offset += n_samples
+                meta_entry["end_index"] = global_offset + n_windows - 1 if n_windows > 0 else global_offset
+                global_offset += n_windows
                 ordered_files_meta.append(meta_entry)
 
         win_size = 250
@@ -384,14 +435,14 @@ class CacheManager:
         if hasattr(pipeline, "config") and pipeline.config is not None:
             cfg = pipeline.config
             if hasattr(cfg, "window_size"):
-                win_size = getattr(cfg, "window_size", 250)
+                win_size = int(getattr(cfg, "window_size", 250))
             elif hasattr(cfg, "windowing") and hasattr(cfg.windowing, "window_size_samples"):
-                win_size = getattr(cfg.windowing, "window_size_samples", 250)
+                win_size = int(getattr(cfg.windowing, "window_size_samples", 250))
 
             if hasattr(cfg, "window_stride"):
-                stride = getattr(cfg, "window_stride", 50)
+                stride = int(getattr(cfg, "window_stride", 50))
             elif hasattr(cfg, "windowing") and hasattr(cfg.windowing, "stride_samples"):
-                stride = getattr(cfg.windowing, "stride_samples", 50)
+                stride = int(getattr(cfg.windowing, "stride_samples", 50))
 
         master_metadata = {
             "cache_version": CACHE_VERSION,

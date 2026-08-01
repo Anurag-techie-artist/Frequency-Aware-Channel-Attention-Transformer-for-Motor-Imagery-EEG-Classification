@@ -82,15 +82,16 @@ def build_dataloaders(
     )
     cache_cfg = dataset_cfg.get("cache", {})
 
+    cache_dir = "N/A"
+    max_open_cache = 0
+    cache_disk_gb = 0.0
+
     if synthetic_data:
         logger.info("Building synthetic dataset DataLoaders (synthetic_data=True)...")
         dataset_root = "Synthetic (In-Memory)"
         train_files_count = 0
         test_files_count = 0
         cache_status = "N/A (Synthetic)"
-        cache_dir = "N/A"
-        max_open_cache = 0
-
         train_ds = create_synthetic_dataset(
             num_samples=128,
             num_bands=model_cfg.get("num_bands", 4),
@@ -161,6 +162,14 @@ def build_dataloaders(
         cache_dir = full_train_ds.cache_dir
         max_open_cache = full_train_ds.max_open_cache_files
 
+        # Calculate actual disk usage of cache directory
+        cache_disk_bytes = 0
+        if os.path.exists(cache_dir):
+            for root_d, _, files_f in os.walk(cache_dir):
+                for f_item in files_f:
+                    cache_disk_bytes += os.path.getsize(os.path.join(root_d, f_item))
+        cache_disk_gb = cache_disk_bytes / (1024 ** 3)
+
         if split_strategy == "random":
             total_len = len(full_train_ds)
             val_len = int(total_len * val_split_ratio)
@@ -175,7 +184,7 @@ def build_dataloaders(
 
     summary_msg = f"""
 ==================================================
-Dataset Summary
+Dataset Summary (v0.11.0 Trial-Level Lazy Caching)
 --------------------------------------------------
 Dataset Root         : {dataset_root}
 Representation       : {representation}
@@ -187,6 +196,7 @@ Cache Version        : {CACHE_VERSION}
 Cache Directory      : {cache_dir}
 Cached EDF Files     : {train_files_count + test_files_count}
 Open Cache Limit     : {max_open_cache}
+Actual Disk Usage    : {cache_disk_gb:.2f} GB
 
 Training Samples     : {len(train_ds)}
 Validation Samples   : {len(val_ds)}

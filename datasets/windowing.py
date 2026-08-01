@@ -9,9 +9,10 @@ Provides functions for cropped window generation matching baseline behavior:
 """
 
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 import numpy as np
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -116,3 +117,39 @@ def generate_sliding_windows(
     )
 
     return X_windows, y_windows, trial_ids_arr
+
+
+def extract_single_window_from_trial(
+    trial: Union[np.ndarray, torch.Tensor],
+    start_sample: int,
+    window_size: int = 250,
+    normalize: bool = True,
+    eps: float = 1e-6,
+) -> torch.Tensor:
+    """
+    Extract a single window from a trial array/tensor and apply per-trial Z-score normalization,
+    matching exact baseline generate_sliding_windows logic.
+
+    Args:
+        trial: Input trial of shape (Channels, Times) or (Bands, Channels, Times).
+        start_sample: Starting sample index within the trial.
+        window_size: Window duration in samples. Default: 250.
+        normalize: Whether to apply per-trial Z-score normalization. Default: True.
+        eps: Epsilon for standard deviation numerical stability. Default: 1e-6.
+
+    Returns:
+        torch.Tensor: Window tensor of shape (Channels, window_size) or (Bands, Channels, window_size).
+    """
+    if not isinstance(trial, torch.Tensor):
+        trial_t = torch.from_numpy(np.asarray(trial)).float()
+    else:
+        trial_t = trial.float()
+
+    if normalize:
+        mean = torch.mean(trial_t, dim=-1, keepdim=True)
+        std = torch.std(trial_t, dim=-1, keepdim=True, correction=0)
+        trial_t = (trial_t - mean) / (std + eps)
+
+    end_sample = start_sample + window_size
+    window = trial_t[..., start_sample:end_sample].clone()
+    return window
