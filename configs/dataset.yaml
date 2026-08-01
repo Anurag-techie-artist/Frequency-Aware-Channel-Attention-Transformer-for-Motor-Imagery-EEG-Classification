@@ -10,7 +10,9 @@ dataset:
   cache:
     enabled: true
     directory: "outputs/cache"
-    max_open_cache_files: 14
+    max_ram_gb: 5.0
+    memory_budget_fraction: 0.60
+    max_open_cache_files: 28
     build_if_missing: true
   window:
     size: 250

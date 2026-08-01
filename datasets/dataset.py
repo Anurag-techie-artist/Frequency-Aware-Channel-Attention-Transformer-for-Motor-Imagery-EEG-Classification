@@ -75,7 +75,9 @@ class HGDDataset(Dataset):
 
         self.cache_enabled = self.cache_config.get("enabled", True)
         self.cache_dir = self.cache_config.get("directory", "outputs/cache")
-        self.max_open_cache_files = self.cache_config.get("max_open_cache_files", 2)
+        self.max_open_cache_files = self.cache_config.get("max_open_cache_files", 14)
+        self.max_ram_gb = self.cache_config.get("max_ram_gb", "auto")
+        self.memory_budget_fraction = self.cache_config.get("memory_budget_fraction", 0.25)
         self.build_if_missing = self.cache_config.get("build_if_missing", True)
 
         self.config_hash = compute_config_hash(self.pipeline.config, self.representation)
@@ -90,13 +92,26 @@ class HGDDataset(Dataset):
             build_if_missing=self.build_if_missing,
         )
 
-        self._file_entries = self.metadata.get("files", [])
-        self._start_indices = [e["start_index"] for e in self._file_entries]
-        self._end_indices = [e["end_index"] for e in self._file_entries]
-        self._total_samples = self.metadata.get("total_samples", 0)
+        all_entries = self.metadata.get("files", [])
+        requested_abs_paths = set(os.path.abspath(p) for p in self.file_paths)
+        self._file_entries = [e for e in all_entries if os.path.abspath(e["edf_path"]) in requested_abs_paths]
+
+        global_offset = 0
+        self._start_indices = []
+        self._end_indices = []
+        for e in self._file_entries:
+            n_win = e["total_windows"]
+            self._start_indices.append(global_offset)
+            self._end_indices.append(global_offset + n_win - 1 if n_win > 0 else global_offset)
+            global_offset += n_win
+        self._total_samples = global_offset
 
         # Initialize LRU Cache for per-EDF sample retrieval
-        self._lru_cache = FileLRUCache(max_open_cache_files=self.max_open_cache_files)
+        self._lru_cache = FileLRUCache(
+            max_open_cache_files=self.max_open_cache_files,
+            max_ram_gb=self.max_ram_gb,
+            memory_budget_fraction=self.memory_budget_fraction,
+        )
 
         # Lazy concatenated tensors cache for legacy compatibility properties (.X, .y)
         self._cached_concat_X: Optional[torch.Tensor] = None
@@ -107,6 +122,18 @@ class HGDDataset(Dataset):
             f"HGDDataset initialized. Total samples: {self._total_samples}, "
             f"Cached files: {len(self._file_entries)}, Config hash: {self.config_hash}"
         )
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get underlying LRU cache instrumentation statistics."""
+        return self._lru_cache.get_stats()
+
+    def print_cache_stats(self) -> None:
+        """Print underlying LRU cache instrumentation statistics."""
+        self._lru_cache.print_stats()
+
+    def reset_cache_stats(self) -> None:
+        """Reset underlying LRU cache instrumentation statistics."""
+        self._lru_cache.reset_stats()
 
     def __len__(self) -> int:
         """Return total number of cropped window samples."""
