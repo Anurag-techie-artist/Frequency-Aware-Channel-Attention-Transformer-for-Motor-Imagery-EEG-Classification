@@ -3,7 +3,7 @@
 
 training:
   seed: 42
-  epochs: 5
+  epochs: 100
   batch_size: 32
   num_workers: 0
   learning_rate: 0.0003
