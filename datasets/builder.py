@@ -160,26 +160,29 @@ def build_dataloaders(
         requested_abs = set(os.path.abspath(p) for p in train_files)
         file_entries = [e for e in all_entries if os.path.abspath(e["edf_path"]) in requested_abs]
 
-        all_train_trials = []
-        for entry in file_entries:
-            abs_p = os.path.abspath(entry["edf_path"])
-            n_trials = entry["num_trials"]
-            for t_idx in range(n_trials):
-                all_train_trials.append((abs_p, t_idx))
+        train_trial_filter = []
+        val_trial_filter = []
 
-        if split_strategy == "random":
+        if split_strategy in ("random", "stratified", "per_subject", "trial"):
             import numpy as np
             rng = np.random.RandomState(seed)
-            shuffled_trials = list(all_train_trials)
-            rng.shuffle(shuffled_trials)
 
-            val_len = int(len(shuffled_trials) * val_split_ratio)
-            train_len = len(shuffled_trials) - val_len
+            for entry in file_entries:
+                abs_p = os.path.abspath(entry["edf_path"])
+                n_trials = entry["num_trials"]
+                file_trials = [(abs_p, t_idx) for t_idx in range(n_trials)]
+                rng.shuffle(file_trials)
 
-            train_trial_filter = shuffled_trials[:train_len]
-            val_trial_filter = shuffled_trials[train_len:]
+                val_len = int(len(file_trials) * val_split_ratio)
+                train_len = len(file_trials) - val_len
+
+                val_trial_filter.extend(file_trials[:val_len])
+                train_trial_filter.extend(file_trials[val_len:])
         else:
-            raise ValueError(f"Unsupported split strategy '{split_strategy}'. Supported strategies: ['random']")
+            raise ValueError(
+                f"Unsupported split strategy '{split_strategy}'. "
+                f"Supported strategies: ['random', 'stratified', 'per_subject', 'trial']"
+            )
 
         train_ds = HGDDataset(
             file_paths=train_files,

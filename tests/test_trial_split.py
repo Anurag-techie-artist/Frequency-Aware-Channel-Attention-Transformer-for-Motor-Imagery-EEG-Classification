@@ -108,6 +108,46 @@ class TestTrialSplit(unittest.TestCase):
         self.assertEqual(tr1.dataset.included_trials, tr2.dataset.included_trials)
         self.assertEqual(val1.dataset.included_trials, val2.dataset.included_trials)
 
+    def test_no_leakage_by_trial_id(self):
+        """Regression Test: Verify every trial ID's generated windows belong EXCLUSIVELY to TRAIN or VALIDATION."""
+        train_loader, val_loader, _ = build_dataloaders(self.config, project_root=PROJECT_ROOT)
+        train_ds = train_loader.dataset
+        val_ds = val_loader.dataset
+
+        train_window_trials = set((abs_edf, trial_idx) for _, trial_idx, _, abs_edf in train_ds._window_samples)
+        val_window_trials = set((abs_edf, trial_idx) for _, trial_idx, _, abs_edf in val_ds._window_samples)
+
+        # For every trial present in train windows: no window from this trial must appear in validation
+        for trial_key in train_window_trials:
+            self.assertNotIn(
+                trial_key,
+                val_window_trials,
+                f"Trial {trial_key} leaked windows into both train and validation splits!",
+            )
+
+        # For every trial present in val windows: no window from this trial must appear in train
+        for trial_key in val_window_trials:
+            self.assertNotIn(
+                trial_key,
+                train_window_trials,
+                f"Trial {trial_key} leaked windows into both validation and train splits!",
+            )
+
+    def test_within_subject_protocol_preservation(self):
+        """Verify that every subject/file has trial-level representation in both train and validation."""
+        train_loader, val_loader, _ = build_dataloaders(self.config, project_root=PROJECT_ROOT)
+        train_ds = train_loader.dataset
+        val_ds = val_loader.dataset
+
+        train_files = set(edf for edf, _ in train_ds.included_trials)
+        val_files = set(edf for edf, _ in val_ds.included_trials)
+
+        self.assertEqual(
+            train_files,
+            val_files,
+            "Within-subject evaluation protocol breached: train and val subject file sets differ!",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -99,12 +99,22 @@ def profile_getitem_microseconds(dataset: HGDDataset, num_samples: int = 500) ->
         t_m0 = time.perf_counter()
         f_idx = bisect_right(dataset._start_indices, idx) - 1
         file_entry = dataset._file_entries[f_idx]
-        local_window_idx = idx - file_entry["start_index"]
+        start_idx = dataset._start_indices[f_idx]
+        local_window_idx = idx - start_idx
         t_m1 = time.perf_counter()
         t_mapping_total += (t_m1 - t_m0)
 
         # 2. LRU Cache Retrieval
-        cache_path = os.path.join(dataset.cache_dir, file_entry["cache"])
+        if hasattr(dataset, "_window_samples") and len(dataset._window_samples) == len(dataset):
+            cache_path, trial_idx, start_sample, _ = dataset._window_samples[idx]
+        else:
+            cache_path = os.path.join(dataset.cache_dir, file_entry["cache"])
+            trial_start_indices = file_entry["trial_start_indices"]
+            trial_idx = bisect_right(trial_start_indices, local_window_idx) - 1
+            local_sample_idx = local_window_idx - trial_start_indices[trial_idx]
+            stride = dataset.metadata.get("stride", 50)
+            start_sample = local_sample_idx * stride
+
         t_lru0 = time.perf_counter()
         data = dataset._lru_cache.get(cache_path)
         t_lru1 = time.perf_counter()
@@ -112,19 +122,16 @@ def profile_getitem_microseconds(dataset: HGDDataset, num_samples: int = 500) ->
 
         # 3. Micro breakdown of Window Slicing vs Normalization
         if "trials" in data:
-            trial_start_indices = file_entry["trial_start_indices"]
-            trial_idx = bisect_right(trial_start_indices, local_window_idx) - 1
-            local_sample_idx = local_window_idx - trial_start_indices[trial_idx]
-
             window_size = dataset.metadata.get("window_size", 250)
-            stride = dataset.metadata.get("stride", 50)
-            start_sample = local_sample_idx * stride
             trial_tensor = data["trials"][trial_idx]
 
-            # Slice timing
+            # Slice timing with safe bounds
             t_sl0 = time.perf_counter()
-            end_sample = start_sample + window_size
-            window_raw = trial_tensor[..., start_sample:end_sample].clone()
+            trial_len = trial_tensor.shape[-1]
+            max_start = max(0, trial_len - window_size)
+            safe_start = max(0, min(start_sample, max_start))
+            end_sample = safe_start + window_size
+            window_raw = trial_tensor[..., safe_start:end_sample].clone()
             t_sl1 = time.perf_counter()
             t_slice_total += (t_sl1 - t_sl0)
 
@@ -132,7 +139,8 @@ def profile_getitem_microseconds(dataset: HGDDataset, num_samples: int = 500) ->
             t_n0 = time.perf_counter()
             mean = torch.mean(window_raw, dim=-1, keepdim=True)
             std = torch.std(window_raw, dim=-1, keepdim=True, correction=0)
-            window_norm = (window_raw - mean) / (std + 1e-6)
+            eps = getattr(dataset.pipeline.config, "eps", 1e-6) if hasattr(dataset, "pipeline") else 1e-6
+            window_norm = (window_raw - mean) / (std + eps)
             t_n1 = time.perf_counter()
             t_norm_total += (t_n1 - t_n0)
 
